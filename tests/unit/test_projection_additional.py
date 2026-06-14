@@ -1,0 +1,159 @@
+# -*- coding: utf-8 -*-
+"""Additional unit tests for projection configuration, physics and scene flow."""
+
+from __future__ import annotations
+
+import numpy as np
+
+from plugins.virtRTG.xray.xrayPresentation import RawPresentationModel
+from plugins.virtRTG.xray.xrayProjection import (
+	XRayPhysicsModel,
+	XRayProjectionConfig,
+	XRayProjectionGeometry,
+	XRayProjectionQualityProfile,
+	XRayScene,
+)
+
+
+class _ConstantBoxSource:
+	"""Return one constant attenuation inside one axis-aligned scene box."""
+
+	def __init__(self, attenuation_value=0.5):
+		"""Store one constant attenuation coefficient."""
+		self.attenuation_value = float(attenuation_value)
+
+	def bounds_world(self):
+		"""Return one simple world-space AABB crossed by every test ray."""
+		return np.array([0.0, 0.0, 0.0], dtype=np.float32), np.array([1.0, 1.0, 2.0], dtype=np.float32)
+
+	def sample_attenuation_world(self, points_world, physics_model):
+		"""Return one constant attenuation for each sampled point."""
+		return np.full(points_world.shape[0], self.attenuation_value, dtype=np.float32)
+
+	def uses_direct_integral(self):
+		"""Opt into slab marching instead of the direct-integral path."""
+		return False
+
+
+def test_quality_profile_downsamples_detector_and_updates_step():
+	"""Apply one draft profile to geometry and scale detector sampling consistently."""
+	geometry = XRayProjectionGeometry.from_detector_pose(
+		detector_center_ref=[0.0, 0.0, 0.0],
+		detector_normal_ref=[0.0, 0.0, -1.0],
+		detector_up_ref=[0.0, 1.0, 0.0],
+		detector_shape_hw=[9, 7],
+		detector_pixel_size_mm=[0.5, 0.25],
+		source_position_ref=[0.0, 0.0, -100.0],
+		step_mm=1.0,
+	)
+
+	quality_geometry = geometry.with_quality_profile(XRayProjectionQualityProfile.draft())
+
+	assert quality_geometry.detector_shape_hw == [5, 4]
+	assert np.allclose(quality_geometry.detector_u_ref, np.asarray(geometry.detector_u_ref, dtype=np.float32) * 2.0)
+	assert np.allclose(quality_geometry.detector_v_ref, np.asarray(geometry.detector_v_ref, dtype=np.float32) * 2.0)
+	assert quality_geometry.step_mm == 2.0
+
+
+def test_integral_output_mode_applies_distance_gain_as_log_offset():
+	"""Shift integral-mode output by the logarithm of the cone-beam distance gain."""
+	model = XRayPhysicsModel(
+		output_mode="integral",
+		source_distance_falloff_mode="inverse_square",
+		source_distance_reference_mm=1000.0,
+		source_distance_power=2.0,
+	)
+
+	image = model.integral_to_image(
+		line_integral=np.array([2.0], dtype=np.float32),
+		source_to_detector_distance_mm=np.array([2000.0], dtype=np.float32),
+		projection_mode="cone",
+	)
+
+	assert np.allclose(image, [2.0 - np.log(0.25)], atol=1e-6)
+
+
+def test_source_distance_gain_uses_median_reference_when_not_configured():
+	"""Infer the reference cone-beam distance from the finite-distance median."""
+	model = XRayPhysicsModel(
+		source_distance_falloff_mode="inverse_square",
+		source_distance_reference_mm=None,
+		source_distance_power=2.0,
+	)
+
+	gain = model.source_distance_gain(
+		source_to_detector_distance_mm=np.array([1000.0, 2000.0, 4000.0], dtype=np.float32),
+		projection_mode="cone",
+	)
+
+	assert np.allclose(gain, [4.0, 1.0, 0.25], atol=1e-6)
+
+
+def test_piecewise_and_threshold_physics_models_return_non_negative_mu_values():
+	"""Keep attenuation non-negative across piecewise and threshold response modes."""
+	values = np.array([-1000.0, 0.0, 500.0, 1500.0], dtype=np.float32)
+	bone_model = XRayPhysicsModel(material_response_mode="piecewise_bone")
+	threshold_model = XRayPhysicsModel(
+		material_response_mode="bone_threshold",
+		bone_threshold_hu=400.0,
+		bone_threshold_softness=50.0,
+	)
+
+	bone_mu = bone_model.scalar_to_mu(values)
+	threshold_mu = threshold_model.scalar_to_mu(values)
+
+	assert np.all(bone_mu >= 0.0)
+	assert np.all(threshold_mu >= 0.0)
+	assert bone_mu[-1] > bone_mu[1]
+	assert threshold_mu[-1] > threshold_mu[1]
+
+
+def test_scene_render_returns_presented_image_and_projection_stats():
+	"""Render one constant source through the full scene/configuration API."""
+	geometry = XRayProjectionGeometry(
+		detector_origin_ref=[0.0, 0.0, -1.0],
+		detector_u_ref=[1.0, 0.0, 0.0],
+		detector_v_ref=[0.0, 1.0, 0.0],
+		detector_shape_hw=[2, 2],
+		ray_direction_ref=[0.0, 0.0, 1.0],
+		step_mm=1.0,
+	)
+	config = XRayProjectionConfig(
+		geometry=geometry,
+		physics_model=XRayPhysicsModel(output_mode="integral"),
+		presentation_model=RawPresentationModel(),
+	)
+	scene = XRayScene.from_sample_sources([_ConstantBoxSource(attenuation_value=0.5)])
+
+	image, stats = scene.render(config=config, return_stats=True)
+
+	assert image.shape == (2, 2)
+	assert np.allclose(image, np.full((2, 2), 1.5, dtype=np.float32))
+	assert stats.traced_pixels == 4
+	assert stats.total_pixels == 4
+	assert stats.total_sample_count == 12
+	assert stats.projection_mode == "parallel"
+	assert "Detector:" in stats.format_report()
+
+
+def test_scene_project_respects_ray_depth_window_limits():
+	"""Clip slab marching to the configured ray-parameter interval."""
+	geometry = XRayProjectionGeometry(
+		detector_origin_ref=[0.0, 0.0, -1.0],
+		detector_u_ref=[1.0, 0.0, 0.0],
+		detector_v_ref=[0.0, 1.0, 0.0],
+		detector_shape_hw=[1, 1],
+		ray_direction_ref=[0.0, 0.0, 1.0],
+		step_mm=1.0,
+		depth_window_mode="ray",
+		depth_window_mm=[1.0, 1.1],
+	)
+	config = XRayProjectionConfig(
+		geometry=geometry,
+		physics_model=XRayPhysicsModel(output_mode="integral"),
+	)
+	scene = XRayScene.from_sample_sources([_ConstantBoxSource(attenuation_value=0.5)])
+
+	image = scene.project(config=config, return_stats=False)
+
+	assert np.allclose(image, [[0.5]], atol=1e-6)
