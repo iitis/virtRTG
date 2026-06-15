@@ -99,6 +99,30 @@ Relevant components:
 
 * Triangle rasterization routines used by mesh projection backends.
 
+Reference:
+
+* Direct3D Rasterization Rules (Microsoft documentation).
+* OpenGL Polygon Rasterization Rules.
+
+---
+
+## Scene Graph and Transformation Hierarchies
+
+The transformation-management concepts used by virtRTG are closely related to
+the scene-tree architecture developed within the dpVision framework.
+
+Relevant components:
+
+* VirtualXRay
+* scene integration layer
+* transformation propagation mechanisms
+
+Reference:
+
+* Tomaka, A. A., Domino, K., Tarnawski, M., & Pojda, D.
+  _Transformation trees – documentation of multimodal image registration._
+  Computers in Biology and Medicine, 2025.
+
 ---
 
 ## Additional Notes

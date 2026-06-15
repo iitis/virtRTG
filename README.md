@@ -1,9 +1,25 @@
 # virtRTG
 
-`virtRTG` is a `pyDpVision` plugin for synthetic X-ray projection from 3D scene
-data. It is intended primarily for research, prototyping, and technical
-experimentation around virtual radiography, especially for volumetric medical
-data and mixed volume/mesh scenes.
+`virtRTG` is a `pyDpVision` plugin for transformation-driven generation of
+comparable synthetic projection images from multimodal anatomical scenes.
+
+The plugin enables projection imaging from independently transformable
+volumetric and surface-based objects represented within a common scene
+hierarchy. It is intended primarily for research, prototyping, and technical
+experimentation involving VirtualRTG generation, anatomical motion analysis,
+and comparable projection imaging scenarios.
+
+## Related publication
+
+The methodological foundations of virtRTG are described in the manuscript:
+
+Pojda D., Domino K., Tarnawski M., Tomaka A.A.
+_"Transformation-driven generation of comparable projection images from multimodal anatomical scenes"_
+
+currently under peer-review.
+
+A DOI and full citation will be added after publication.
+
 
 ## Status
 
@@ -26,6 +42,29 @@ What is still evolving:
 - some mesh backends are still exploratory,
 - GUI and OpenGL paths are not the main target of automated testing,
 - standalone packaging outside `pyDpVision` has not been completed yet.
+
+## Concept
+
+Unlike conventional DRR pipelines that typically operate on a fixed volumetric
+dataset, virtRTG treats projection generation as an observation process applied
+to a transformation-aware scene.
+
+A scene may contain:
+
+- CT or CBCT volumes,
+- segmented anatomical structures,
+- surface meshes,
+- dental scans,
+- treatment-related objects,
+- anatomical landmarks and trajectories.
+
+All scene entities may remain independently transformable and are propagated
+directly into projection space through explicit transformations during image
+generation.
+
+This design allows generation of multiple directly comparable projection images
+from alternative anatomical configurations while preserving identical imaging
+conditions.
 
 ## Features
 
@@ -53,6 +92,15 @@ What is still evolving:
 - optional heuristic energy and distance falloff terms,
 - raw, digital radiography, and film-like presentation models,
 - robust percentile normalization, contrast, gamma, inversion, and windowing.
+
+### Transformation-aware workflows
+
+- independently transformable anatomical objects,
+- projection generation from multimodal scene hierarchies,
+- support for alternative anatomical configurations,
+- motion-dependent projection scenarios,
+- mandibular-motion and TMJ-oriented experimentation,
+- propagation of landmarks and annotations into projection space.
 
 ### Workflow integration
 
@@ -175,12 +223,13 @@ Current test philosophy:
 - keep backend tests close to the plugin so they can move with it if it becomes
   a standalone repository.
 
-See [tests/README.md](C:/praca/pyDpVision/plugins/virtRTG/tests/README.md:1)
+See [tests/README.md](tests/README.md)
 for details on the current scaffold and next planned cases.
 
 ## Limitations
 
-This plugin is intentionally pragmatic, not physically complete.
+This plugin is intended as a methodological and experimental environment rather
+than a physically faithful radiographic simulator.
 
 - The attenuation model is simplified and should be treated as approximate.
 - Material-response modes are useful for experimentation, not validated imaging physics.
@@ -191,17 +240,21 @@ This plugin is intentionally pragmatic, not physically complete.
 ## Documentation
 
 - attribution and algorithm notes:
-  [docs/THIRD_PARTY_ATTRIBUTION.md](C:/praca/pyDpVision/plugins/virtRTG/docs/THIRD_PARTY_ATTRIBUTION.md:1)
+  [docs/THIRD_PARTY_ATTRIBUTION.md](docs/THIRD_PARTY_ATTRIBUTION.md)
 - test scaffold notes:
-  [tests/README.md](C:/praca/pyDpVision/plugins/virtRTG/tests/README.md:1)
+  [tests/README.md](tests/README.md)
 
 ## Roadmap
 
 Reasonable next steps for the plugin itself:
 
-- strengthen source-backend tests with synthetic `Volumetric` and `Mesh` fixtures,
-- add more lightweight end-to-end backend projection tests,
-- reduce host-specific assumptions around plugin loading and global state,
-- document a backend-only usage path outside the GUI,
-- separate experimental backends more clearly from the default workflow,
-- improve standalone readiness if the plugin is moved into its own repository.
+- strengthen source-backend tests with synthetic `Volumetric` and `Mesh` fixtures
+- add more lightweight end-to-end backend projection tests
+- reduce host-specific assumptions around plugin loading and global state
+- document a backend-only usage path outside the GUI
+- separate experimental backends more clearly from the default workflow
+- improve standalone readiness if the plugin is moved into its own repository
+- investigate GPU acceleration backends
+- support richer transformation-driven motion scenarios
+- extend physical modelling with optional scattering and detector effects
+- improve standalone reproducibility outside pyDpVision

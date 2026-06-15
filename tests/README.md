@@ -3,7 +3,8 @@
 This directory contains a plugin-local `pytest` scaffold for the `xray/`
 backend. The goal is to keep backend validation close to the plugin so the same
 tests can move with `virtRTG` if it is later extracted into a standalone
-repository.
+repository. The focus is on deterministic validation of the transformation-driven
+projection backend rather than GUI integration testing.
 
 ## Current contents
 
@@ -42,6 +43,7 @@ repository.
 
 ## Notes
 
-- The current scaffold intentionally avoids Qt GUI and OpenGL rendering.
+- The current scaffold intentionally avoids Qt GUI and OpenGL rendering and
+focuses on deterministic backend behaviour.
 - The skipped skeleton file marks the highest-value next steps without making
   the suite fail before source fixtures are ready.
