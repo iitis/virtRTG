@@ -241,6 +241,8 @@ than a physically faithful radiographic simulator.
 
 - attribution and algorithm notes:
   [docs/THIRD_PARTY_ATTRIBUTION.md](docs/THIRD_PARTY_ATTRIBUTION.md)
+- detailed Polish documentation of the presentation layer:
+  [docs/PRESENTATION_LAYER_PL.md](docs/PRESENTATION_LAYER_PL.md)
 - test scaffold notes:
   [tests/README.md](tests/README.md)
 
