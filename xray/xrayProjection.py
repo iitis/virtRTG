@@ -889,12 +889,13 @@ class XRayProjector:
 						(direct_progress_fraction[1] - direct_progress_fraction[0]) * (float(source_idx + 1) / float(len(direct_sources)))
 					)
 				_t_src_start = perf_counter()
+				source_physics_model = source.resolve_physics_model(physics_model)
 				direct_integral = source.ray_integral_world(
 					ray_origins=ray_origins[hit_indices],
 					ray_directions=ray_directions[hit_indices],
 					t_starts=t_starts[hit_indices],
 					t_ends=t_ends[hit_indices],
-					physics_model=physics_model,
+					physics_model=source_physics_model,
 					step_mm=step_mm,
 					progress_callback=progress_callback,
 					progress_fraction=(source_progress_start, source_progress_end),
@@ -953,7 +954,8 @@ class XRayProjector:
 					points_world = ray_origins[active_idx] + t_k_f * ray_directions[active_idx]
 					total_mu = np.zeros(len(active_idx), dtype=np.float32)
 					for source in marched_sources:
-						total_mu += source.sample_attenuation_world(points_world, physics_model)
+						source_physics_model = source.resolve_physics_model(physics_model)
+						total_mu += source.sample_attenuation_world(points_world, source_physics_model)
 					projection_flat[active_idx] += total_mu * step_mm
 					total_sample_count += len(active_idx)
 

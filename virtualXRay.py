@@ -21,7 +21,8 @@ from .xray.xrayPresentation import (
 from .xray.xraySource import (
 	MeshXRaySource,
 	VolumetricXRaySource,
-	ensure_xray_source_config
+	ensure_xray_source_config,
+	get_xray_material_response_config,
 )
 
 from .xray.xrayProjection import (
@@ -245,6 +246,16 @@ class VirtualXRay(Object):
 		"""Return the global transform of this scene node used as a local X-ray reference frame."""
 		return np.asarray(self.getGlobalTransformation(), dtype=np.float32)
 
+	def export_scene_description(self, path, parent_widget=None, interactive=False):
+		"""Save one simplified, plugin-local scene description to an XML file."""
+		from .sceneFormat import save_virtual_xray_scene
+		return save_virtual_xray_scene(
+			self,
+			path,
+			parent_widget=parent_widget,
+			interactive=interactive,
+		)
+
 	def _ensure_depth_window_defaults(self):
 		"""Backfill depth-window attributes for older serialized objects."""
 		if not hasattr(self, "depth_window_mode"):
@@ -338,6 +349,7 @@ class VirtualXRay(Object):
 				scalar_scale=float(getattr(vol, "xray_scalar_scale", 1.0)),
 				scalar_bias=float(getattr(vol, "xray_scalar_bias", 0.0)),
 				attenuation_multiplier=float(getattr(vol, "xray_attenuation_multiplier", 1.0)),
+				material_response_config=get_xray_material_response_config(vol),
 				volume_backend=str(getattr(vol, "xray_volume_backend", "sampling")).lower(),
 			)
 			for vol in self.collect_volumetrics()
@@ -354,6 +366,7 @@ class VirtualXRay(Object):
 				scalar_scale=float(getattr(mesh, "xray_scalar_scale", 1.0)),
 				scalar_bias=float(getattr(mesh, "xray_scalar_bias", 0.0)),
 				attenuation_multiplier=float(getattr(mesh, "xray_attenuation_multiplier", 1.0)),
+				material_response_config=get_xray_material_response_config(mesh),
 			)
 			for mesh in self.collect_meshes()
 			if bool(getattr(mesh, "xray_source_enabled", True))

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from plugins.virtRTG.xray.xrayPresentation import RawPresentationModel
@@ -33,6 +35,47 @@ class _ConstantBoxSource:
 	def uses_direct_integral(self):
 		"""Opt into slab marching instead of the direct-integral path."""
 		return False
+
+	def resolve_physics_model(self, physics_model):
+		"""Keep the shared physics model unchanged for this simple helper source."""
+		return physics_model
+
+
+class _ScalarDrivenBoxSource:
+	"""Map one constant scalar value through the effective per-source physics model."""
+
+	def __init__(self, scalar_value=0.0, response_mode_override=None, bone_threshold_override=None):
+		"""Store one scalar test value and optional source-local response overrides."""
+		self.scalar_value = float(scalar_value)
+		self.response_mode_override = response_mode_override
+		self.bone_threshold_override = bone_threshold_override
+
+	def bounds_world(self):
+		"""Return one simple world-space AABB crossed by every test ray."""
+		return np.array([0.0, 0.0, 0.0], dtype=np.float32), np.array([1.0, 1.0, 2.0], dtype=np.float32)
+
+	def sample_attenuation_world(self, points_world, physics_model):
+		"""Return attenuation derived from one scalar and the effective physics model."""
+		mu_value = float(np.asarray(
+			physics_model.scalar_to_mu(np.array([self.scalar_value], dtype=np.float32)),
+			dtype=np.float32,
+		)[0])
+		return np.full(points_world.shape[0], mu_value, dtype=np.float32)
+
+	def uses_direct_integral(self):
+		"""Opt into slab marching instead of the direct-integral path."""
+		return False
+
+	def resolve_physics_model(self, physics_model):
+		"""Optionally override the shared material response for this one source."""
+		if self.response_mode_override is None:
+			return physics_model
+		override_kwargs = {
+			"material_response_mode": str(self.response_mode_override),
+		}
+		if self.bone_threshold_override is not None:
+			override_kwargs["bone_threshold_hu"] = float(self.bone_threshold_override)
+		return replace(physics_model, **override_kwargs)
 
 
 def test_quality_profile_downsamples_detector_and_updates_step():
@@ -157,3 +200,69 @@ def test_scene_project_respects_ray_depth_window_limits():
 	image = scene.project(config=config, return_stats=False)
 
 	assert np.allclose(image, [[0.5]], atol=1e-6)
+
+
+def test_scene_sources_inherit_global_material_response_by_default():
+	"""Use the shared material response when a source does not define a local override."""
+	geometry = XRayProjectionGeometry(
+		detector_origin_ref=[0.0, 0.0, -1.0],
+		detector_u_ref=[1.0, 0.0, 0.0],
+		detector_v_ref=[0.0, 1.0, 0.0],
+		detector_shape_hw=[1, 1],
+		ray_direction_ref=[0.0, 0.0, 1.0],
+		step_mm=1.0,
+	)
+	config = XRayProjectionConfig(
+		geometry=geometry,
+		physics_model=XRayPhysicsModel(output_mode="integral", material_response_mode="piecewise_bone"),
+	)
+	scene = XRayScene.from_sample_sources([_ScalarDrivenBoxSource(scalar_value=600.0)])
+
+	image = scene.project(config=config, return_stats=False)
+	expected_mu = float(np.asarray(
+		config.physics_model.scalar_to_mu(np.array([600.0], dtype=np.float32)),
+		dtype=np.float32,
+	)[0])
+
+	assert np.allclose(image, [[expected_mu * 3.0]], atol=1e-6)
+
+
+def test_scene_sources_can_override_material_response_per_source():
+	"""Allow one source to replace the shared material response with a local override."""
+	geometry = XRayProjectionGeometry(
+		detector_origin_ref=[0.0, 0.0, -1.0],
+		detector_u_ref=[1.0, 0.0, 0.0],
+		detector_v_ref=[0.0, 1.0, 0.0],
+		detector_shape_hw=[1, 1],
+		ray_direction_ref=[0.0, 0.0, 1.0],
+		step_mm=1.0,
+	)
+	config = XRayProjectionConfig(
+		geometry=geometry,
+		physics_model=XRayPhysicsModel(
+			output_mode="integral",
+			material_response_mode="linear",
+			bone_threshold_hu=900.0,
+			bone_threshold_softness=10.0,
+		),
+	)
+	scene = XRayScene.from_sample_sources([
+		_ScalarDrivenBoxSource(
+			scalar_value=600.0,
+			response_mode_override="bone_threshold",
+			bone_threshold_override=500.0,
+		)
+	])
+
+	image = scene.project(config=config, return_stats=False)
+	override_model = replace(
+		config.physics_model,
+		material_response_mode="bone_threshold",
+		bone_threshold_hu=500.0,
+	)
+	expected_mu = float(np.asarray(
+		override_model.scalar_to_mu(np.array([600.0], dtype=np.float32)),
+		dtype=np.float32,
+	)[0])
+
+	assert np.allclose(image, [[expected_mu * 3.0]], atol=1e-6)

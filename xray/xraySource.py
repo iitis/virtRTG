@@ -20,6 +20,109 @@ from .xrayHelpers import _normalize_vector, _transform_point, _transform_directi
 _log = logging.getLogger(__name__)
 
 
+@dataclass
+class XRayMaterialResponseConfig:
+	"""Describe one source-local material interpretation override."""
+
+	enabled: bool = False
+	mode: str = "linear"
+	bone_threshold_hu: float | None = None
+	bone_threshold_softness: float = 250.0
+	window_center: float | None = None
+	window_width: float | None = None
+	window_mode: str = "hard"
+	window_softness: float = 150.0
+
+	@classmethod
+	def from_mapping(cls, data):
+		"""Build one config object from a plain mapping-like payload."""
+		if data is None:
+			return cls()
+		return cls(
+			enabled=bool(data.get("enabled", False)),
+			mode=str(data.get("mode", "linear")).lower(),
+			bone_threshold_hu=(
+				None if data.get("bone_threshold_hu", None) is None
+				else float(data.get("bone_threshold_hu"))
+			),
+			bone_threshold_softness=max(0.0, float(data.get("bone_threshold_softness", 250.0))),
+			window_center=(
+				None if data.get("window_center", None) is None
+				else float(data.get("window_center"))
+			),
+			window_width=(
+				None if data.get("window_width", None) is None
+				else max(0.0, float(data.get("window_width")))
+			),
+			window_mode=str(data.get("window_mode", "hard")).lower(),
+			window_softness=max(0.0, float(data.get("window_softness", 150.0))),
+		)
+
+	def normalized(self):
+		"""Return one normalized copy with clamped numeric values."""
+		return type(self).from_mapping({
+			"enabled": self.enabled,
+			"mode": self.mode,
+			"bone_threshold_hu": self.bone_threshold_hu,
+			"bone_threshold_softness": self.bone_threshold_softness,
+			"window_center": self.window_center,
+			"window_width": self.window_width,
+			"window_mode": self.window_mode,
+			"window_softness": self.window_softness,
+		})
+
+	def to_mapping(self):
+		"""Return one JSON-ready mapping representation."""
+		config = self.normalized()
+		return {
+			"enabled": bool(config.enabled),
+			"mode": str(config.mode),
+			"bone_threshold_hu": config.bone_threshold_hu,
+			"bone_threshold_softness": float(config.bone_threshold_softness),
+			"window_center": config.window_center,
+			"window_width": config.window_width,
+			"window_mode": str(config.window_mode),
+			"window_softness": float(config.window_softness),
+		}
+
+	def apply_to_physics_model(self, physics_model):
+		"""Return one physics model with this local material override applied."""
+		if not self.enabled:
+			return physics_model
+		config = self.normalized()
+		return replace(
+			physics_model,
+			material_response_mode=config.mode,
+			bone_threshold_hu=config.bone_threshold_hu,
+			bone_threshold_softness=config.bone_threshold_softness,
+			material_window_center=config.window_center,
+			material_window_width=config.window_width,
+			material_window_mode=config.window_mode,
+			material_window_softness=config.window_softness,
+		)
+
+
+def get_xray_material_response_config(source_object):
+	"""Return one normalized per-source material-response config."""
+	existing = getattr(source_object, "xray_material_response_config", None)
+	if isinstance(existing, XRayMaterialResponseConfig):
+		return existing.normalized()
+	if isinstance(existing, dict):
+		return XRayMaterialResponseConfig.from_mapping(existing).normalized()
+	return XRayMaterialResponseConfig()
+
+
+def set_xray_material_response_config(source_object, config):
+	"""Persist one per-source material-response config."""
+	config = (
+		config.normalized()
+		if isinstance(config, XRayMaterialResponseConfig)
+		else XRayMaterialResponseConfig.from_mapping(config).normalized()
+	)
+	source_object.xray_material_response_config = config
+	return config
+
+
 
 def ensure_xray_source_config(source_object):
 	"""Attach default per-object X-ray source settings to one scene object.
@@ -59,6 +162,7 @@ def ensure_xray_source_config(source_object):
 	for attr_name, default_value in defaults.items():
 		if not hasattr(source_object, attr_name):
 			setattr(source_object, attr_name, default_value)
+	set_xray_material_response_config(source_object, get_xray_material_response_config(source_object))
 	return source_object
 
 def normalize_projection_to_uint8(image, fixed_range=None, robust_percentile=99.5, invert=False):
@@ -523,14 +627,23 @@ class XRaySampleSource(ABC):
 		without relying on method-identity comparisons.
 		"""
 		return False
-		return None
+
+	def resolve_physics_model(self, physics_model):
+		"""Return the effective physics model used by this source."""
+		return physics_model
 
 
 class VolumetricXRaySource(XRaySampleSource):
 	"""Adapt a `Volumetric` object into a world-space X-ray attenuation source."""
 
 	def __init__(self, volumetric, global_transform=None, interpolation="linear", fill_value=None, scalar_preprocessor=None,
-	             scalar_scale=1.0, scalar_bias=0.0, attenuation_multiplier=1.0, volume_backend="sampling"):
+	             scalar_scale=1.0, scalar_bias=0.0, attenuation_multiplier=1.0, volume_backend="sampling",
+	             material_response_config=None,
+	             material_response_override_enabled=False, material_response_override_mode="linear",
+	             material_response_override_bone_threshold_hu=None,
+	             material_response_override_bone_threshold_softness=None,
+	             material_window_override_center=None, material_window_override_width=None,
+	             material_window_override_mode="hard", material_window_override_softness=None):
 		"""Store volumetric data and transformation used for world-space sampling."""
 		if not isinstance(volumetric, Volumetric):
 			raise TypeError("volumetric must be an instance of Volumetric.")
@@ -550,9 +663,36 @@ class VolumetricXRaySource(XRaySampleSource):
 		self.scalar_bias = float(scalar_bias)
 		self.attenuation_multiplier = float(attenuation_multiplier)
 		self.volume_backend = str(volume_backend).lower()
+		self.material_response_config = (
+			set_xray_material_response_config(self, material_response_config)
+			if material_response_config is not None
+			else XRayMaterialResponseConfig(
+				enabled=bool(material_response_override_enabled),
+				mode=str(material_response_override_mode).lower(),
+				bone_threshold_hu=material_response_override_bone_threshold_hu,
+				bone_threshold_softness=(
+					250.0 if material_response_override_bone_threshold_softness is None
+					else float(material_response_override_bone_threshold_softness)
+				),
+				window_center=material_window_override_center,
+				window_width=material_window_override_width,
+				window_mode=str(material_window_override_mode).lower(),
+				window_softness=(
+					150.0 if material_window_override_softness is None
+					else float(material_window_override_softness)
+				),
+			).normalized()
+		)
 		if self.volume_backend not in {"sampling", "siddon"}:
 			raise ValueError("volume_backend must be 'sampling' or 'siddon'.")
 		self._scalar_stats = None if scalar_preprocessor is None else scalar_preprocessor.estimate_volume_stats(self._volume)
+
+	def resolve_physics_model(self, physics_model):
+		"""Return one source-local physics override layered on the global model."""
+		config = getattr(self, "material_response_config", None)
+		if isinstance(config, XRayMaterialResponseConfig):
+			return config.apply_to_physics_model(physics_model)
+		return XRayMaterialResponseConfig().apply_to_physics_model(physics_model)
 
 	def bounds_world(self):
 		"""Return the world-space axis-aligned bounding box of the transformed volume."""
@@ -583,7 +723,8 @@ class VolumetricXRaySource(XRaySampleSource):
 
 	def sample_attenuation_world(self, points_world, physics_model):
 		"""Sample attenuation coefficients in world coordinates using the supplied physics model."""
-		return physics_model.scalar_to_mu(self.sample_scalar_world(points_world)) * self.attenuation_multiplier
+		source_physics_model = self.resolve_physics_model(physics_model)
+		return source_physics_model.scalar_to_mu(self.sample_scalar_world(points_world)) * self.attenuation_multiplier
 
 	def _siddon_integral_vectorized(
 		self,
@@ -784,7 +925,8 @@ class VolumetricXRaySource(XRaySampleSource):
 				scalar_values = self.scalar_preprocessor.apply(scalar_values, self._scalar_stats)
 			scalar_values = scalar_values * self.scalar_scale + self.scalar_bias
 
-			mu = physics_model.scalar_to_mu(scalar_values) * self.attenuation_multiplier
+			source_physics_model = self.resolve_physics_model(physics_model)
+			mu = source_physics_model.scalar_to_mu(scalar_values) * self.attenuation_multiplier
 
 			# Integrate: accumulate mu * dl for valid segments.
 			mu_dl = np.where(valid, mu * dl.astype(np.float32), 0.0)
@@ -845,7 +987,13 @@ class MeshXRaySource(XRaySampleSource):
 	"""Adapt one closed triangle mesh into a simplified solid or shell X-ray source."""
 
 	def __init__(self, mesh, global_transform=None, scalar_value=2000.0, mode="solid", shell_thickness_mm=1.0,
-	             scalar_scale=1.0, scalar_bias=0.0, attenuation_multiplier=1.0, backend="analytic_bvh"):
+	             scalar_scale=1.0, scalar_bias=0.0, attenuation_multiplier=1.0, backend="analytic_bvh",
+	             material_response_config=None,
+	             material_response_override_enabled=False, material_response_override_mode="linear",
+	             material_response_override_bone_threshold_hu=None,
+	             material_response_override_bone_threshold_softness=None,
+	             material_window_override_center=None, material_window_override_width=None,
+	             material_window_override_mode="hard", material_window_override_softness=None):
 		"""Store mesh geometry and one simplified material model for X-ray projection.
 
 		The current implementation assumes triangle faces define either:
@@ -867,6 +1015,26 @@ class MeshXRaySource(XRaySampleSource):
 		self.scalar_bias = float(scalar_bias)
 		self.attenuation_multiplier = float(attenuation_multiplier)
 		self.backend = str(backend).strip().lower()
+		self.material_response_config = (
+			set_xray_material_response_config(self, material_response_config)
+			if material_response_config is not None
+			else XRayMaterialResponseConfig(
+				enabled=bool(material_response_override_enabled),
+				mode=str(material_response_override_mode).lower(),
+				bone_threshold_hu=material_response_override_bone_threshold_hu,
+				bone_threshold_softness=(
+					250.0 if material_response_override_bone_threshold_softness is None
+					else float(material_response_override_bone_threshold_softness)
+				),
+				window_center=material_window_override_center,
+				window_width=material_window_override_width,
+				window_mode=str(material_window_override_mode).lower(),
+				window_softness=(
+					150.0 if material_window_override_softness is None
+					else float(material_window_override_softness)
+				),
+			).normalized()
+		)
 		self.projected_min_abs_cos = max(0.0, min(1.0, float(getattr(self.mesh, "xray_projected_min_abs_cos", 0.0))))
 		self.debug_export_dir = getattr(self.mesh, "xray_debug_export_dir", None)
 		self.debug_compare_analytic = bool(getattr(self.mesh, "xray_debug_compare_analytic", True))
@@ -913,6 +1081,13 @@ class MeshXRaySource(XRaySampleSource):
 		# OS thread-creation overhead (~150 ms/thread on Windows).
 		self._thread_pool: "ThreadPoolExecutor | None" = None
 		self._thread_pool_workers: int = 0
+
+	def resolve_physics_model(self, physics_model):
+		"""Return one source-local physics override layered on the global model."""
+		config = getattr(self, "material_response_config", None)
+		if isinstance(config, XRayMaterialResponseConfig):
+			return config.apply_to_physics_model(physics_model)
+		return XRayMaterialResponseConfig().apply_to_physics_model(physics_model)
 
 	def _ensure_bvh(self):
 		"""Build the BVH on first call; no-op on subsequent calls."""
@@ -1570,8 +1745,9 @@ class MeshXRaySource(XRaySampleSource):
 
 		# Reuse the current physics model by mapping one synthetic scalar value into
 		# a constant attenuation coefficient for the whole mesh material.
+		source_physics_model = self.resolve_physics_model(physics_model)
 		mu_value = float(np.asarray(
-			physics_model.scalar_to_mu(np.array([self.scalar_value * self.scalar_scale + self.scalar_bias], dtype=np.float32)),
+			source_physics_model.scalar_to_mu(np.array([self.scalar_value * self.scalar_scale + self.scalar_bias], dtype=np.float32)),
 			dtype=np.float32,
 		)[0]) * self.attenuation_multiplier
 		if mu_value <= 0.0:

@@ -38,6 +38,7 @@ from dpVision.gui.propBaseObject import PropBaseObject
 from dpVision.gui.propWidget import PropWidget
 from ..virtualXRay import VirtualXRay
 from ..xray.xrayAnnotationOverlay import XRayOverlayCross, XRayOverlayPolyline
+from ..xray.xraySource import get_xray_material_response_config, set_xray_material_response_config
 from ..xray.xraySource import normalize_projection_to_uint8, ensure_xray_source_config
 
 class _CollapsibleGroup(QWidget):
@@ -612,44 +613,131 @@ class PropVirtualXRay(PropWidget):
 		"""Return a QGroupBox with xray controls for one Mesh or Volumetric source object."""
 		src_ref = weakref.ref(source_obj)
 		src_type = "Vol" if isinstance(source_obj, Volumetric) else "Mesh"
+		material_config = get_xray_material_response_config(source_obj)
 		group = QGroupBox(f"[{src_type}]  {source_obj.label}")
 		group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-		form = QFormLayout(group)
-		form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-		form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-		form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
-		form.setContentsMargins(4, 4, 4, 4)
+		layout = QVBoxLayout(group)
+		layout.setContentsMargins(4, 4, 4, 4)
+		layout.setSpacing(6)
+
+		def _section(title):
+			box = QGroupBox(title)
+			self._set_compact_group(box)
+			form = QFormLayout(box)
+			self._configure_form_layout(form)
+			form.setContentsMargins(6, 6, 6, 6)
+			layout.addWidget(box)
+			return form
+
+		source_form = _section("Source")
+		material_form = _section("Material Response")
+		type_form = _section("Volume Sampling" if isinstance(source_obj, Volumetric) else "Mesh Model")
 
 		enabled_check = QCheckBox("Enabled")
 		enabled_check.setChecked(bool(source_obj.xray_source_enabled))
-		form.addRow("", enabled_check)
+		source_form.addRow("", enabled_check)
 
 		scale_spin = QDoubleSpinBox()
 		scale_spin.setRange(-1e3, 1e3)
 		scale_spin.setDecimals(6)
 		scale_spin.setSingleStep(0.05)
 		scale_spin.setValue(float(source_obj.xray_scalar_scale))
-		form.addRow("Scalar scale:", scale_spin)
+		source_form.addRow("Scalar scale:", scale_spin)
 
 		bias_spin = QDoubleSpinBox()
 		bias_spin.setRange(-1e6, 1e6)
 		bias_spin.setDecimals(3)
 		bias_spin.setSingleStep(10.0)
 		bias_spin.setValue(float(source_obj.xray_scalar_bias))
-		form.addRow("Scalar bias:", bias_spin)
+		source_form.addRow("Scalar bias:", bias_spin)
 
 		atten_spin = QDoubleSpinBox()
 		atten_spin.setRange(0.0, 1e6)
 		atten_spin.setDecimals(6)
 		atten_spin.setSingleStep(0.05)
 		atten_spin.setValue(float(source_obj.xray_attenuation_multiplier))
-		form.addRow("Attenuation x:", atten_spin)
+		source_form.addRow("Attenuation x:", atten_spin)
+
+		material_override_check = QCheckBox("Use individual material response")
+		material_override_check.setChecked(bool(material_config.enabled))
+		material_form.addRow("", material_override_check)
+
+		material_response_combo = QComboBox()
+		material_response_combo.addItems(["linear", "piecewise_bone", "piecewise_soft_tissue", "bone_threshold"])
+		material_response_combo.setCurrentText(str(material_config.mode))
+		material_form.addRow("Response:", material_response_combo)
+
+		material_threshold_spin = QDoubleSpinBox()
+		material_threshold_spin.setRange(-1e6, 1e6)
+		material_threshold_spin.setDecimals(3)
+		material_threshold_spin.setSingleStep(10.0)
+		material_threshold_spin.setValue(
+			0.0 if material_config.bone_threshold_hu is None
+			else float(material_config.bone_threshold_hu)
+		)
+		material_form.addRow("Bone threshold:", material_threshold_spin)
+
+		material_softness_spin = QDoubleSpinBox()
+		material_softness_spin.setRange(0.0, 1e6)
+		material_softness_spin.setDecimals(3)
+		material_softness_spin.setSingleStep(10.0)
+		material_softness_spin.setValue(float(material_config.bone_threshold_softness))
+		material_form.addRow("Threshold soft.:", material_softness_spin)
+
+		material_window_center_spin = QDoubleSpinBox()
+		material_window_center_spin.setRange(-1e6, 1e6)
+		material_window_center_spin.setDecimals(3)
+		material_window_center_spin.setSingleStep(10.0)
+		material_window_center_spin.setValue(
+			0.0 if material_config.window_center is None
+			else float(material_config.window_center)
+		)
+		material_form.addRow("Window center:", material_window_center_spin)
+
+		material_window_width_spin = QDoubleSpinBox()
+		material_window_width_spin.setRange(0.0, 1e6)
+		material_window_width_spin.setDecimals(3)
+		material_window_width_spin.setSingleStep(10.0)
+		material_window_width_spin.setValue(
+			0.0 if material_config.window_width is None
+			else float(material_config.window_width)
+		)
+		material_form.addRow("Window width:", material_window_width_spin)
+
+		material_window_mode_combo = QComboBox()
+		material_window_mode_combo.addItems(["hard", "linear", "sigmoid"])
+		material_window_mode_combo.setCurrentText(str(material_config.window_mode))
+		material_form.addRow("Window mode:", material_window_mode_combo)
+
+		material_window_softness_spin = QDoubleSpinBox()
+		material_window_softness_spin.setRange(0.0, 1e6)
+		material_window_softness_spin.setDecimals(3)
+		material_window_softness_spin.setSingleStep(10.0)
+		material_window_softness_spin.setValue(float(material_config.window_softness))
+		material_form.addRow("Window soft.:", material_window_softness_spin)
+
+		def _update_material_override_widgets():
+			override_enabled = bool(material_override_check.isChecked())
+			uses_bone_threshold = str(material_response_combo.currentText()).lower() == "bone_threshold"
+			width_enabled = float(material_window_width_spin.value()) > 0.0
+			material_response_combo.setEnabled(override_enabled)
+			material_threshold_spin.setEnabled(override_enabled and uses_bone_threshold)
+			material_softness_spin.setEnabled(override_enabled and uses_bone_threshold)
+			material_window_center_spin.setEnabled(override_enabled)
+			material_window_width_spin.setEnabled(override_enabled)
+			material_window_mode_combo.setEnabled(override_enabled and width_enabled)
+			window_mode = str(material_window_mode_combo.currentText()).lower()
+			material_window_softness_spin.setEnabled(
+				override_enabled and width_enabled and window_mode in {"linear", "sigmoid"}
+			)
+
+		_update_material_override_widgets()
 
 		if isinstance(source_obj, Volumetric):
 			interp_combo = QComboBox()
 			interp_combo.addItems(["default", "nearest", "linear", "cubic"])
 			interp_combo.setCurrentText(str(source_obj.xray_interpolation_override))
-			form.addRow("Interpolation:", interp_combo)
+			type_form.addRow("Interpolation:", interp_combo)
 
 			backend_combo = QComboBox()
 			backend_combo.addItems(["sampling", "siddon"])
@@ -658,11 +746,11 @@ class PropVirtualXRay(PropWidget):
 				"siddon  – exact voxel traversal (chord-length, step_mm independent)"
 			)
 			backend_combo.setCurrentText(str(getattr(source_obj, "xray_volume_backend", "sampling")))
-			form.addRow("Volume backend:", backend_combo)
+			type_form.addRow("Backend:", backend_combo)
 
 			fill_check = QCheckBox("Use explicit fill value")
 			fill_check.setChecked(bool(source_obj.xray_fill_value_override_enabled))
-			form.addRow("", fill_check)
+			type_form.addRow("", fill_check)
 
 			fill_spin = QDoubleSpinBox()
 			fill_spin.setRange(-1e9, 1e9)
@@ -670,12 +758,15 @@ class PropVirtualXRay(PropWidget):
 			fill_spin.setSingleStep(10.0)
 			fill_spin.setValue(float(source_obj.xray_fill_value_override))
 			fill_spin.setEnabled(bool(source_obj.xray_fill_value_override_enabled))
-			form.addRow("Fill value:", fill_spin)
+			type_form.addRow("Fill value:", fill_spin)
 
 			def _on_vol_changed(
 				_ref=src_ref, _en=enabled_check, _sc=scale_spin, _bi=bias_spin,
-				_at=atten_spin, _ic=interp_combo, _bc=backend_combo,
-				_fc=fill_check, _fs=fill_spin
+				_at=atten_spin, _mo=material_override_check, _mm=material_response_combo,
+				_mt=material_threshold_spin, _ms=material_softness_spin,
+				_mwc=material_window_center_spin, _mww=material_window_width_spin,
+				_mwm=material_window_mode_combo, _mws=material_window_softness_spin,
+				_ic=interp_combo, _bc=backend_combo, _fc=fill_check, _fs=fill_spin
 			):
 				s = _ref()
 				if s is None:
@@ -684,15 +775,34 @@ class PropVirtualXRay(PropWidget):
 				s.xray_scalar_scale = float(_sc.value())
 				s.xray_scalar_bias = float(_bi.value())
 				s.xray_attenuation_multiplier = max(0.0, float(_at.value()))
+				window_width = max(0.0, float(_mww.value()))
+				material_cfg = get_xray_material_response_config(s)
+				material_cfg.enabled = bool(_mo.isChecked())
+				material_cfg.mode = str(_mm.currentText()).lower()
+				material_cfg.bone_threshold_hu = (
+					float(_mt.value()) if material_cfg.mode == "bone_threshold" else None
+				)
+				material_cfg.bone_threshold_softness = max(0.0, float(_ms.value()))
+				material_cfg.window_center = float(_mwc.value()) if window_width > 0.0 else None
+				material_cfg.window_width = window_width if window_width > 0.0 else None
+				material_cfg.window_mode = str(_mwm.currentText()).lower()
+				material_cfg.window_softness = max(0.0, float(_mws.value()))
+				set_xray_material_response_config(s, material_cfg)
 				s.xray_interpolation_override = str(_ic.currentText()).lower()
 				s.xray_volume_backend = str(_bc.currentText()).lower()
 				s.xray_fill_value_override_enabled = bool(_fc.isChecked())
 				s.xray_fill_value_override = float(_fs.value())
+				_update_material_override_widgets()
 				_fs.setEnabled(s.xray_fill_value_override_enabled)
 				AP.updateAllViews()
 
-			for w in (enabled_check, scale_spin, bias_spin, atten_spin,
-			          interp_combo, backend_combo, fill_check, fill_spin):
+			for w in (
+				enabled_check, scale_spin, bias_spin, atten_spin,
+				material_override_check, material_response_combo, material_threshold_spin,
+				material_softness_spin, material_window_center_spin, material_window_width_spin,
+				material_window_mode_combo, material_window_softness_spin,
+				interp_combo, backend_combo, fill_check, fill_spin
+			):
 				if hasattr(w, "toggled"):
 					w.toggled.connect(lambda *_: _on_vol_changed())
 				elif hasattr(w, "currentTextChanged"):
@@ -704,19 +814,19 @@ class PropVirtualXRay(PropWidget):
 			backend_combo = QComboBox()
 			backend_combo.addItems(["analytic_bvh", "projected_intersection_list"])
 			backend_combo.setCurrentText(str(getattr(source_obj, "xray_mesh_backend", "analytic_bvh")))
-			form.addRow("Backend:", backend_combo)
+			type_form.addRow("Backend:", backend_combo)
 
 			mode_combo = QComboBox()
 			mode_combo.addItems(["solid", "shell"])
 			mode_combo.setCurrentText(str(source_obj.xray_mesh_mode))
-			form.addRow("Mode:", mode_combo)
+			type_form.addRow("Mode:", mode_combo)
 
 			scalar_val_spin = QDoubleSpinBox()
 			scalar_val_spin.setRange(-1e6, 1e6)
 			scalar_val_spin.setDecimals(3)
 			scalar_val_spin.setSingleStep(10.0)
 			scalar_val_spin.setValue(float(source_obj.xray_mesh_scalar_value))
-			form.addRow("Scalar value:", scalar_val_spin)
+			type_form.addRow("Scalar value:", scalar_val_spin)
 
 			shell_spin = QDoubleSpinBox()
 			shell_spin.setRange(0.001, 1e6)
@@ -724,12 +834,15 @@ class PropVirtualXRay(PropWidget):
 			shell_spin.setSingleStep(0.1)
 			shell_spin.setValue(float(source_obj.xray_mesh_shell_thickness_mm))
 			shell_spin.setEnabled(str(source_obj.xray_mesh_mode).lower() == "shell")
-			form.addRow("Shell [mm]:", shell_spin)
+			type_form.addRow("Shell [mm]:", shell_spin)
 
 			def _on_mesh_changed(
 				_ref=src_ref, _en=enabled_check, _sc=scale_spin, _bi=bias_spin,
-				_at=atten_spin, _bc=backend_combo, _mc=mode_combo,
-				_sv=scalar_val_spin, _sh=shell_spin
+				_at=atten_spin, _mo=material_override_check, _mm=material_response_combo,
+				_mt=material_threshold_spin, _ms=material_softness_spin,
+				_mwc=material_window_center_spin, _mww=material_window_width_spin,
+				_mwm=material_window_mode_combo, _mws=material_window_softness_spin,
+				_bc=backend_combo, _mc=mode_combo, _sv=scalar_val_spin, _sh=shell_spin
 			):
 				s = _ref()
 				if s is None:
@@ -742,11 +855,30 @@ class PropVirtualXRay(PropWidget):
 				s.xray_scalar_scale = float(_sc.value())
 				s.xray_scalar_bias = float(_bi.value())
 				s.xray_attenuation_multiplier = max(0.0, float(_at.value()))
+				window_width = max(0.0, float(_mww.value()))
+				material_cfg = get_xray_material_response_config(s)
+				material_cfg.enabled = bool(_mo.isChecked())
+				material_cfg.mode = str(_mm.currentText()).lower()
+				material_cfg.bone_threshold_hu = (
+					float(_mt.value()) if material_cfg.mode == "bone_threshold" else None
+				)
+				material_cfg.bone_threshold_softness = max(0.0, float(_ms.value()))
+				material_cfg.window_center = float(_mwc.value()) if window_width > 0.0 else None
+				material_cfg.window_width = window_width if window_width > 0.0 else None
+				material_cfg.window_mode = str(_mwm.currentText()).lower()
+				material_cfg.window_softness = max(0.0, float(_mws.value()))
+				set_xray_material_response_config(s, material_cfg)
+				_update_material_override_widgets()
 				_sh.setEnabled(s.xray_mesh_mode == "shell")
 				AP.updateAllViews()
 
-			for w in (enabled_check, scale_spin, bias_spin, atten_spin,
-			          backend_combo, mode_combo, scalar_val_spin, shell_spin):
+			for w in (
+				enabled_check, scale_spin, bias_spin, atten_spin,
+				material_override_check, material_response_combo, material_threshold_spin,
+				material_softness_spin, material_window_center_spin, material_window_width_spin,
+				material_window_mode_combo, material_window_softness_spin,
+				backend_combo, mode_combo, scalar_val_spin, shell_spin
+			):
 				if hasattr(w, "toggled"):
 					w.toggled.connect(lambda *_: _on_mesh_changed())
 				elif hasattr(w, "currentTextChanged"):
@@ -754,6 +886,7 @@ class PropVirtualXRay(PropWidget):
 				else:
 					w.valueChanged.connect(lambda *_: _on_mesh_changed())
 
+		layout.addStretch(1)
 		return group
 
 	# ─────────────────────────────────────────────────────────────────────────

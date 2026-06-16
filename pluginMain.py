@@ -10,10 +10,12 @@ from PyQt5.QtCore import *
 from PyQt5.QtWidgets import *
 
 from dpVision import AP, Object, Transform, PluginInterface
+from dpVision.gui.contextMenu import ContextMenu
 from dpVision.annotationPath import AnnotationPath
 from dpVision.annotationPoint import AnnotationPoint
 from .virtualXRay import VirtualXRay
 from .gui.propVirtualXRay import PropVirtualXRay
+from .sceneFormat import load_virtual_xray_scene
 
 import numpy as np
 import os
@@ -23,7 +25,9 @@ class VirtualRTG(PluginInterface):
 		self.plugin_name = 'Virtual RTG'
 		self.panel = None
 		self.setup = None
+		self._context_menu_factory = self._create_virtual_xray_context_menu
 		AP.mainWin.dock["properties"].properties_map[Object]['VirtualXRay'] = PropVirtualXRay
+		ContextMenu.register_extra_menu_factory(self._context_menu_factory)
 		#AP.mainWin.dock["properties"].properties_map[BaseObject]['Graph'] = PropGraph
 
 
@@ -41,6 +45,7 @@ class VirtualRTG(PluginInterface):
 
 	def on_unload(self):
 		self.remove_menu()
+		ContextMenu.unregister_extra_menu_factory(self._context_menu_factory)
 		if self.panel:
 			AP.mainWin.removeDockWidget(self.panel);    
 		print( "Bye bye")
@@ -225,3 +230,63 @@ class VirtualRTG(PluginInterface):
 	def on_button1(self):
 		#QMessageBox.information(self.mainWindow, 'Komunikat', 'Akcja wykonana przez '+self.plugin_name)
 		pass
+
+	def _create_virtual_xray_context_menu(self, context_menu, obj):
+		"""Return one temporary submenu with virtRTG scene import/export actions."""
+		if obj is None or not obj.hasType('VirtualXRay'):
+			return None
+		menu = QMenu("virtual xray...", context_menu)
+		action = QAction("export scene...", context_menu)
+		action.triggered.connect(lambda *_: self._context_export_virtual_xray_scene(obj))
+		menu.addAction(action)
+		action = QAction("import scene...", context_menu)
+		action.triggered.connect(lambda *_: self._context_import_virtual_xray_scene(obj))
+		menu.addAction(action)
+		return menu
+
+	def _context_export_virtual_xray_scene(self, virtual_xray):
+		"""Export one simplified virtRTG scene description to XML."""
+		file_name, _ = QFileDialog.getSaveFileName(
+			AP.mainWin,
+			"Export virtRTG Scene",
+			f"{virtual_xray.label or 'virtual_xray_scene'}.vxrscene.xml",
+			"virtRTG Scene (*.vxrscene.xml);;XML (*.xml)",
+		)
+		if not file_name:
+			return
+		try:
+			virtual_xray.export_scene_description(
+				file_name,
+				parent_widget=AP.mainWin,
+				interactive=True,
+			)
+		except ValueError as exc:
+			QMessageBox.warning(AP.mainWin, "Export virtRTG Scene", str(exc))
+
+	def _context_import_virtual_xray_scene(self, virtual_xray):
+		"""Import one simplified virtRTG scene description into the selected VirtualXRay."""
+		file_name, _ = QFileDialog.getOpenFileName(
+			AP.mainWin,
+			"Import virtRTG Scene",
+			"",
+			"virtRTG Scene (*.vxrscene.xml *.xml);;XML (*.xml)",
+		)
+		if not file_name:
+			return
+		if len(virtual_xray.children()):
+			answer = QMessageBox.question(
+				AP.mainWin,
+				"Import virtRTG Scene",
+				"Replace the current VirtualXRay subtree with the imported scene?",
+				QMessageBox.Yes | QMessageBox.No,
+				QMessageBox.No,
+			)
+			if answer != QMessageBox.Yes:
+				return
+			for child in list(virtual_xray.children()):
+				virtual_xray.removeChild(child)
+		load_virtual_xray_scene(file_name, target_virtual_xray=virtual_xray)
+		AP.mainWin.dock["workspace"].rebuildTree()
+		AP.mainWin.dock["workspace"].refreshAll()
+		AP.updateAllViews()
+		AP.updateProperties()
