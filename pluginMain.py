@@ -64,6 +64,10 @@ class VirtualRTG(PluginInterface):
 		self.menu.addAction(action)
 		action.triggered.connect(self.onAction_Create_RTG)
 
+		action = QAction("Import RTG", AP.mainWin)
+		self.menu.addAction(action)
+		action.triggered.connect(self.onAction_Import_RTG)
+
 		action = QAction("Create Demo", AP.mainWin)
 		self.menu.addAction(action)
 		action.triggered.connect(self.onAction_Create_Demo)
@@ -109,19 +113,40 @@ class VirtualRTG(PluginInterface):
 	def onAction_Create_RTG(self):
 		print("Akcja menu: Create RTG")
 
-		if self.setup is None:
-			self.setup = VirtualXRay()
+		# if self.setup is None:
+		# 	self.setup = VirtualXRay()
 
-		if self.setup.parent is None and self.setup not in AP.mainWin.workspace.m_data:
-			AP.addObject(self.setup)
+		# if self.setup.parent is None and self.setup not in AP.mainWin.workspace.m_data:
+		# 	AP.addObject(self.setup)
 
-		self.setup.apply_geometry_preset("orthoralix_PA")
+		# self.setup.apply_geometry_preset("orthoralix_PA")
+		rtg = VirtualXRay()
+		AP.addObject(rtg)
+		rtg.apply_geometry_preset("orthoralix_PA")
+
+	def onAction_Import_RTG(self):
+		print("Akcja menu: Import RTG")
+
+		# if self.setup is None:
+		# 	self.setup = VirtualXRay()
+
+		# if self.setup.parent is None and self.setup not in AP.mainWin.workspace.m_data:
+		# 	AP.addObject(self.setup)
+
+		# self._context_import_virtual_xray_scene(self.setup)
+		
+		rtg = VirtualXRay()
+		AP.addObject(rtg)
+		self._context_import_virtual_xray_scene(rtg)
 
 
 	def onAction_Create_Demo(self):
 		print("Akcja menu: Create Demo")
 		
-		self.onAction_Create_RTG()
+		# self.onAction_Create_RTG()
+		rtg = VirtualXRay()
+		AP.addObject(rtg)
+		rtg.apply_geometry_preset("orthoralix_PA")
 
 		def on_success(skull):
 			if skull is None:
@@ -144,7 +169,8 @@ class VirtualRTG(PluginInterface):
 			skull_transform.rotate(-90, [1,0,0])
 			skull_transform.rotate(90, [0,1,0])
 			skull_transform.addChild(skull)
-			self.setup.addChild(skull_transform)
+			# self.setup.addChild(skull_transform)
+			rtg.addChild(skull_transform)
 
 			p = [-78.18, -74.30, -21.59]
 			s = [147.456, 147.456, 86.976]
