@@ -15,7 +15,7 @@ from dpVision.annotationPath import AnnotationPath
 from dpVision.annotationPoint import AnnotationPoint
 from .virtualXRay import VirtualXRay
 from .gui.propVirtualXRay import PropVirtualXRay
-from .sceneFormat import load_virtual_xray_scene
+from .sceneFormat import load_virtual_xray_scene, register_atmdl_integration, unregister_atmdl_integration
 
 import numpy as np
 import os
@@ -33,6 +33,7 @@ class VirtualRTG(PluginInterface):
 
 	def on_load(self):
 		print( "plugin "+self.plugin_name+" loaded.")
+		register_atmdl_integration()
 		
 		# self.mainWindow.helpAbout()
 		self.add_menu()
@@ -44,6 +45,7 @@ class VirtualRTG(PluginInterface):
 		AP.mainWin.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.panel)
 
 	def on_unload(self):
+		unregister_atmdl_integration()
 		self.remove_menu()
 		ContextMenu.unregister_extra_menu_factory(self._context_menu_factory)
 		if self.panel:

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -27,6 +28,9 @@ from .xray.xraySource import (
 
 SCENE_FORMAT_NAME = "virtRTG-scene"
 SCENE_FORMAT_VERSION = 1
+ATMDL_VIRTUAL_XRAY_TOKENS = ("virtualXRay", "virtual_xray", "vxray")
+
+_ATMDL_INTEGRATION_REGISTERED = False
 
 
 def _vec_to_text(values):
@@ -43,6 +47,59 @@ def _matrix_to_text(matrix):
 def _json_text(payload):
 	"""Return stable pretty JSON text for one payload mapping."""
 	return json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
+
+
+def _json_compact_text(payload):
+	"""Return one compact JSON string safe for single-line ATMDL payload storage."""
+	return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _encode_payload64(payload):
+	"""Return one URL-safe base64 string with compact JSON payload."""
+	raw = _json_compact_text(payload).encode("utf-8")
+	return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_payload64(payload64):
+	"""Decode one URL-safe base64 JSON payload from ATMDL."""
+	raw = base64.urlsafe_b64decode(str(payload64).encode("ascii"))
+	return json.loads(raw.decode("utf-8"))
+
+
+def _atmdl_bool_text(value):
+	"""Return one compact ATMDL-friendly boolean literal."""
+	return "1" if bool(value) else "0"
+
+
+def _atmdl_optional_scalar_text(value):
+	"""Return one ATMDL-friendly scalar literal preserving explicit nulls."""
+	if value is None:
+		return "none"
+	if isinstance(value, bool):
+		return _atmdl_bool_text(value)
+	return f"{float(value):.16g}" if isinstance(value, (int, float)) else str(value)
+
+
+def _atmdl_read_optional_float(value, default=None):
+	"""Parse one optional float literal used in text ATMDL plugin sections."""
+	if value is None:
+		return default
+	text = str(value).strip().lower()
+	if text in {"", "none", "null"}:
+		return default
+	return float(value)
+
+
+def _atmdl_read_bool(value, default=False):
+	"""Parse one ATMDL boolean literal."""
+	if value is None:
+		return bool(default)
+	text = str(value).strip().lower()
+	if text in {"1", "true", "yes", "on"}:
+		return True
+	if text in {"0", "false", "no", "off"}:
+		return False
+	return bool(default)
 
 
 def _source_links_for_object(obj):
@@ -132,6 +189,13 @@ def _ensure_source_links_for_object(obj, parent_widget=None, interactive=False):
 			f"Nie udało się zapisać obiektu '{object_label}' do pliku:\n{save_path}",
 		)
 		return False
+	save_warnings = Parser.consume_save_warnings(obj)
+	if save_warnings:
+		QMessageBox.warning(
+			parent_widget or AP.mainWin,
+			"Export virtRTG Scene",
+			"\n\n".join(save_warnings),
+		)
 	return _source_links_for_object(obj) is not None
 
 
@@ -304,6 +368,83 @@ def _iter_export_nodes(virtual_xray, node=None):
 		yield from _iter_export_nodes(virtual_xray, child)
 
 
+def _iter_export_child_objects(virtual_xray):
+	"""Yield standard descendants of one VirtualXRay, skipping nested sub-scenes."""
+	for child in virtual_xray.children():
+		yield child
+		if isinstance(child, VirtualXRay):
+			continue
+		yield from _iter_export_nodes(virtual_xray, child)
+
+
+def _child_index_path(root, target):
+	"""Return one stable child-index path from root to target within the exported subtree."""
+	path = []
+	current = target
+	while current is not None and current is not root:
+		parent = getattr(current, "parent", None)
+		if parent is None:
+			return None
+		children = list(parent.children())
+		try:
+			index = children.index(current)
+		except ValueError:
+			return None
+		path.append(index)
+		current = parent
+	return list(reversed(path)) if current is root else None
+
+
+def _resolve_child_index_path(root, path):
+	"""Resolve one child-index path against the already parsed subtree."""
+	current = root
+	for index in path:
+		children = list(current.children())
+		if index < 0 or index >= len(children):
+			return None
+		current = children[index]
+	return current
+
+
+def _virtual_xray_atmdl_payload(virtual_xray):
+	"""Return one ATMDL payload containing VirtualXRay and per-source configs."""
+	source_nodes = []
+	for obj in _iter_export_child_objects(virtual_xray):
+		if not isinstance(obj, (Volumetric, Mesh)):
+			continue
+		index_path = _child_index_path(virtual_xray, obj)
+		if index_path is None:
+			continue
+		source_nodes.append(
+			{
+				"child_index_path": index_path,
+				"payload": _source_config_payload(obj),
+			}
+		)
+	return {
+		"schema": "virtRTG-atmdl-virtual-xray",
+		"version": 1,
+		"virtual_xray": _virtual_xray_payload(virtual_xray),
+		"source_nodes": source_nodes,
+	}
+
+
+def _apply_virtual_xray_atmdl_payload(virtual_xray, payload):
+	"""Apply one ATMDL payload to the parsed VirtualXRay subtree."""
+	virtual_xray_payload = payload.get("virtual_xray", {})
+	if virtual_xray_payload:
+		_apply_virtual_xray_payload(virtual_xray, virtual_xray_payload)
+	for source_entry in payload.get("source_nodes", []):
+		target = _resolve_child_index_path(
+			virtual_xray,
+			list(source_entry.get("child_index_path", [])),
+		)
+		source_payload = source_entry.get("payload", {})
+		if target is None or not isinstance(target, (Volumetric, Mesh)):
+			continue
+		_apply_source_payload(target, source_payload)
+
+
 def build_virtual_xray_scene_xml(virtual_xray):
 	"""Return one XML tree describing the current virtRTG scene subtree."""
 	root = ET.Element(
@@ -367,7 +508,8 @@ def save_virtual_xray_scene(virtual_xray, path, parent_widget=None, interactive=
 
 def _text_to_floats(text, expected_count=None):
 	"""Parse one whitespace-separated list of floats."""
-	values = [float(v) for v in str(text).split()]
+	normalized = str(text).replace(",", " ")
+	values = [float(v) for v in normalized.split()]
 	if expected_count is not None and len(values) != expected_count:
 		raise ValueError(f"Expected {expected_count} values, got {len(values)}")
 	return values
@@ -468,6 +610,120 @@ def _apply_source_payload(obj, payload):
 		obj.xray_mesh_shell_thickness_mm = float(payload.get("mesh_shell_thickness_mm", 1.0))
 
 
+def _write_virtual_xray_text_sections(writer_cls, stream, virtual_xray, indent):
+	"""Write editable ATMDL sections mirroring the high-level VirtualXRay payload."""
+	ind1 = writer_cls._ind(indent)
+	ind2 = writer_cls._ind(indent + 1)
+
+	stream.write(f"{ind1}geometry {{\n")
+	stream.write(f'{ind2}projectionMode "{virtual_xray.projection_mode}"\n')
+	stream.write(f"{ind2}detectorCenter [{','.join(f'{float(v):.16g}' for v in virtual_xray.detector_center_ref)}]\n")
+	stream.write(f"{ind2}detectorNormal [{','.join(f'{float(v):.16g}' for v in virtual_xray.detector_normal_ref)}]\n")
+	stream.write(f"{ind2}detectorUp [{','.join(f'{float(v):.16g}' for v in virtual_xray.detector_up_ref)}]\n")
+	stream.write(f"{ind2}detectorShape [{int(virtual_xray.detector_shape_hw[0])},{int(virtual_xray.detector_shape_hw[1])}]\n")
+	stream.write(f"{ind2}detectorPixelSize [{float(virtual_xray.detector_pixel_size_mm[0]):.16g},{float(virtual_xray.detector_pixel_size_mm[1]):.16g}]\n")
+	stream.write(f"{ind2}sourcePosition [{','.join(f'{float(v):.16g}' for v in virtual_xray.source_position_ref)}]\n")
+	stream.write(f"{ind2}rayDirection [{','.join(f'{float(v):.16g}' for v in virtual_xray.ray_direction_ref)}]\n")
+	stream.write(f"{ind2}stepMM {float(virtual_xray.step_mm):.16g}\n")
+	stream.write(f'{ind2}qualityProfile "{virtual_xray.quality_profile_name}"\n')
+	stream.write(f'{ind2}depthWindowMode "{getattr(virtual_xray, "depth_window_mode", "off")}"\n')
+	stream.write(f"{ind2}depthWindowMM [{float(getattr(virtual_xray, 'depth_window_mm', [0.0, 0.0])[0]):.16g},{float(getattr(virtual_xray, 'depth_window_mm', [0.0, 0.0])[1]):.16g}]\n")
+	stream.write(f"{ind2}depthWindowOrigin [{','.join(f'{float(v):.16g}' for v in getattr(virtual_xray, 'depth_window_origin_ref', [0.0, 0.0, 0.0]))}]\n")
+	stream.write(f"{ind2}depthWindowAxis [{','.join(f'{float(v):.16g}' for v in getattr(virtual_xray, 'depth_window_axis_ref', [0.0, 0.0, 1.0]))}]\n")
+	stream.write(f"{ind1}}}\n")
+
+	stream.write(f"{ind1}sourceDefaults {{\n")
+	stream.write(f'{ind2}interpolation "{virtual_xray.source_interpolation}"\n')
+	stream.write(f"{ind2}fillValue {_atmdl_optional_scalar_text(virtual_xray.source_fill_value)}\n")
+	stream.write(f'{ind2}preprocessMode "{virtual_xray.source_preprocess_mode}"\n')
+	stream.write(f"{ind2}preprocessLowPercentile {float(virtual_xray.source_preprocess_low_percentile):.16g}\n")
+	stream.write(f"{ind2}preprocessHighPercentile {float(virtual_xray.source_preprocess_high_percentile):.16g}\n")
+	stream.write(f"{ind2}preprocessOutputLow {float(virtual_xray.source_preprocess_output_low):.16g}\n")
+	stream.write(f"{ind2}preprocessOutputHigh {float(virtual_xray.source_preprocess_output_high):.16g}\n")
+	stream.write(f"{ind2}meshSourceScalarValue {float(virtual_xray.mesh_source_scalar_value):.16g}\n")
+	stream.write(f'{ind2}meshSourceMode "{virtual_xray.mesh_source_mode}"\n')
+	stream.write(f"{ind2}meshSurfaceThicknessMM {float(virtual_xray.mesh_surface_thickness_mm):.16g}\n")
+	stream.write(f"{ind1}}}\n")
+
+	stream.write(f"{ind1}physics {{\n")
+	stream.write(f"{ind2}muAir {float(virtual_xray.physics_mu_air):.16g}\n")
+	stream.write(f"{ind2}muWater {float(virtual_xray.physics_mu_water):.16g}\n")
+	stream.write(f"{ind2}hounsfieldAir {float(virtual_xray.physics_hounsfield_air):.16g}\n")
+	stream.write(f"{ind2}attenuationScale {float(virtual_xray.physics_attenuation_scale):.16g}\n")
+	stream.write(f"{ind2}sourceEnergyKeV {float(virtual_xray.physics_source_energy_kev):.16g}\n")
+	stream.write(f"{ind2}referenceEnergyKeV {float(virtual_xray.physics_reference_energy_kev):.16g}\n")
+	stream.write(f"{ind2}attenuationEnergyExponent {float(virtual_xray.physics_attenuation_energy_exponent):.16g}\n")
+	stream.write(f'{ind2}outputMode "{virtual_xray.physics_output_mode}"\n')
+	stream.write(f"{ind2}intensityFloor {float(virtual_xray.physics_intensity_floor):.16g}\n")
+	stream.write(f'{ind2}sourceDistanceFalloffMode "{virtual_xray.physics_source_distance_falloff_mode}"\n')
+	stream.write(f"{ind2}sourceDistanceReferenceMM {_atmdl_optional_scalar_text(virtual_xray.physics_source_distance_reference_mm)}\n")
+	stream.write(f"{ind2}sourceDistancePower {float(virtual_xray.physics_source_distance_power):.16g}\n")
+	stream.write(f'{ind2}materialResponseMode "{virtual_xray.physics_material_response_mode}"\n')
+	stream.write(f"{ind2}boneThresholdHU {_atmdl_optional_scalar_text(virtual_xray.physics_bone_threshold_hu)}\n")
+	stream.write(f"{ind2}boneThresholdSoftness {float(virtual_xray.physics_bone_threshold_softness):.16g}\n")
+	stream.write(f"{ind2}materialWindowCenter {_atmdl_optional_scalar_text(virtual_xray.physics_material_window_center)}\n")
+	stream.write(f"{ind2}materialWindowWidth {_atmdl_optional_scalar_text(virtual_xray.physics_material_window_width)}\n")
+	stream.write(f'{ind2}materialWindowMode "{virtual_xray.physics_material_window_mode}"\n')
+	stream.write(f"{ind2}materialWindowSoftness {float(virtual_xray.physics_material_window_softness):.16g}\n")
+	stream.write(f"{ind1}}}\n")
+
+	stream.write(f"{ind1}presentation {{\n")
+	stream.write(f'{ind2}mode "{virtual_xray.presentation_mode}"\n')
+	stream.write(f"{ind2}invert {_atmdl_bool_text(virtual_xray.presentation_invert)}\n")
+	stream.write(f"{ind2}gamma {float(virtual_xray.presentation_gamma):.16g}\n")
+	stream.write(f"{ind2}contrast {float(virtual_xray.presentation_contrast):.16g}\n")
+	stream.write(f"{ind2}robustPercentile {float(virtual_xray.presentation_robust_percentile):.16g}\n")
+	stream.write(f"{ind2}windowCenter {_atmdl_optional_scalar_text(virtual_xray.presentation_window_center)}\n")
+	stream.write(f"{ind2}windowWidth {_atmdl_optional_scalar_text(virtual_xray.presentation_window_width)}\n")
+	stream.write(f"{ind2}overlayAnnotations {_atmdl_bool_text(getattr(virtual_xray, 'presentation_overlay_annotations', False))}\n")
+	stream.write(f"{ind2}overlayLabels {_atmdl_bool_text(getattr(virtual_xray, 'presentation_overlay_labels', False))}\n")
+	stream.write(f"{ind2}overlayCrossSizePx {int(getattr(virtual_xray, 'presentation_overlay_cross_size_px', 6))}\n")
+	stream.write(f"{ind1}}}\n")
+
+
+def _write_source_node_sections(writer_cls, stream, virtual_xray, indent):
+	"""Write editable per-source ATMDL sections keyed by child-index path."""
+	ind1 = writer_cls._ind(indent)
+	ind2 = writer_cls._ind(indent + 1)
+	ind3 = writer_cls._ind(indent + 2)
+	for obj in _iter_export_child_objects(virtual_xray):
+		if not isinstance(obj, (Volumetric, Mesh)):
+			continue
+		index_path = _child_index_path(virtual_xray, obj)
+		if index_path is None:
+			continue
+		cfg = _source_config_payload(obj)
+		stream.write(f"{ind1}sourceNode {{\n")
+		stream.write(f"{ind2}childIndexPath [{','.join(str(int(v)) for v in index_path)}]\n")
+		stream.write(f'{ind2}sourceType "{cfg.get("source_type", "")}"\n')
+		stream.write(f"{ind2}enabled {_atmdl_bool_text(cfg.get('enabled', True))}\n")
+		stream.write(f"{ind2}scalarScale {float(cfg.get('scalar_scale', 1.0)):.16g}\n")
+		stream.write(f"{ind2}scalarBias {float(cfg.get('scalar_bias', 0.0)):.16g}\n")
+		stream.write(f"{ind2}attenuationMultiplier {float(cfg.get('attenuation_multiplier', 1.0)):.16g}\n")
+		stream.write(f"{ind2}materialResponse {{\n")
+		mrc = cfg.get("material_response_config", {})
+		stream.write(f"{ind3}enabled {_atmdl_bool_text(mrc.get('enabled', False))}\n")
+		stream.write(f'{ind3}mode "{mrc.get("mode", "linear")}"\n')
+		stream.write(f"{ind3}boneThresholdHU {_atmdl_optional_scalar_text(mrc.get('bone_threshold_hu', None))}\n")
+		stream.write(f"{ind3}boneThresholdSoftness {_atmdl_optional_scalar_text(mrc.get('bone_threshold_softness', None))}\n")
+		stream.write(f"{ind3}windowCenter {_atmdl_optional_scalar_text(mrc.get('window_center', None))}\n")
+		stream.write(f"{ind3}windowWidth {_atmdl_optional_scalar_text(mrc.get('window_width', None))}\n")
+		stream.write(f'{ind3}windowMode "{mrc.get("window_mode", "hard")}"\n')
+		stream.write(f"{ind3}windowSoftness {_atmdl_optional_scalar_text(mrc.get('window_softness', None))}\n")
+		stream.write(f"{ind2}}}\n")
+		if cfg.get("source_type") == "volumetric":
+			stream.write(f'{ind2}interpolationOverride "{cfg.get("interpolation_override", "default")}"\n')
+			stream.write(f"{ind2}fillValueOverrideEnabled {_atmdl_bool_text(cfg.get('fill_value_override_enabled', False))}\n")
+			stream.write(f"{ind2}fillValueOverride {float(cfg.get('fill_value_override', 0.0)):.16g}\n")
+			stream.write(f'{ind2}volumeBackend "{cfg.get("volume_backend", "sampling")}"\n')
+		else:
+			stream.write(f'{ind2}meshBackend "{cfg.get("mesh_backend", "analytic_bvh")}"\n')
+			stream.write(f'{ind2}meshMode "{cfg.get("mesh_mode", "solid")}"\n')
+			stream.write(f"{ind2}meshScalarValue {float(cfg.get('mesh_scalar_value', 1800.0)):.16g}\n")
+			stream.write(f"{ind2}meshShellThicknessMM {float(cfg.get('mesh_shell_thickness_mm', 1.0)):.16g}\n")
+		stream.write(f"{ind1}}}\n")
+
+
 def _instantiate_source_from_payload(payload):
 	"""Create one mesh or volumetric object from source links when possible."""
 	source_type = str(payload.get("source_type", "")).lower()
@@ -497,6 +753,211 @@ def _instantiate_source_from_payload(payload):
 			obj._virt_rtg_missing_source_placeholder = True
 		return obj
 	return None
+
+
+def _parse_section_mapping(parser, stream):
+	"""Parse one generic ATMDL subsection into a flat mapping."""
+	slowo = parser.skip_comments(stream)
+	if slowo is None:
+		return None
+	if slowo != "{":
+		print("BLAD. Oczekiwano znaku { odczytano: " + str(slowo))
+		return None
+
+	result = {}
+	matrix_keys = {
+		"detectorCenter", "detectorNormal", "detectorUp", "detectorShape",
+		"detectorPixelSize", "sourcePosition", "rayDirection", "depthWindowMM",
+		"depthWindowOrigin", "depthWindowAxis", "childIndexPath",
+	}
+	string_keys = {
+		"stepMM", "qualityProfile", "projectionMode", "depthWindowMode",
+		"interpolation", "preprocessMode", "meshSourceMode", "outputMode",
+		"sourceDistanceFalloffMode", "materialResponseMode", "materialWindowMode",
+		"mode", "sourceType", "interpolationOverride", "volumeBackend",
+		"meshBackend", "meshMode", "windowMode",
+	}
+	bool_keys = {
+		"invert", "overlayAnnotations", "overlayLabels", "enabled",
+		"fillValueOverrideEnabled",
+	}
+	scalar_keys = {
+		"fillValue", "preprocessLowPercentile", "preprocessHighPercentile",
+		"preprocessOutputLow", "preprocessOutputHigh", "meshSourceScalarValue",
+		"meshSurfaceThicknessMM", "muAir", "muWater", "hounsfieldAir",
+		"attenuationScale", "sourceEnergyKeV", "referenceEnergyKeV",
+		"attenuationEnergyExponent", "intensityFloor", "sourceDistanceReferenceMM",
+		"sourceDistancePower", "boneThresholdHU", "boneThresholdSoftness",
+		"materialWindowCenter", "materialWindowWidth", "materialWindowSoftness",
+		"gamma", "contrast", "robustPercentile", "windowCenter", "windowWidth",
+		"overlayCrossSizePx", "scalarScale", "scalarBias", "attenuationMultiplier",
+		"fillValueOverride", "meshScalarValue", "meshShellThicknessMM",
+		"windowSoftness",
+	}
+	while slowo != "}":
+		slowo = parser.skip_comments(stream)
+		if slowo is None:
+			return None
+		if slowo == "}":
+			break
+		if slowo == "materialResponse":
+			result["material_response"] = _parse_section_mapping(parser, stream)
+			continue
+		if slowo in matrix_keys:
+			tekst = parser.parseType_matrix(stream)
+			if tekst is not None:
+				result[slowo] = tekst
+			continue
+		if slowo in string_keys:
+			result[slowo] = parser.parseType_string(stream)
+			continue
+		if slowo in bool_keys:
+			value, _ = parser.readWord(stream)
+			result[slowo] = value
+			continue
+		if slowo in scalar_keys:
+			value, _ = parser.readWord(stream)
+			result[slowo] = value
+			continue
+		tekst = parser.parseType_matrix(stream)
+		if tekst is not None:
+			result[slowo] = tekst
+		else:
+			value, _ = parser.readWord(stream)
+			result[slowo] = value
+
+	return result
+
+
+def _apply_virtual_xray_text_sections(virtual_xray, sections):
+	"""Apply human-editable ATMDL sections to one VirtualXRay object."""
+	geometry = sections.get("geometry", {})
+	if geometry:
+		if geometry.get("projectionMode") is not None:
+			virtual_xray.projection_mode = str(geometry["projectionMode"])
+		if geometry.get("detectorCenter") is not None:
+			virtual_xray.detector_center_ref = np.asarray(_text_to_floats(geometry["detectorCenter"], 3), dtype=np.float32)
+		if geometry.get("detectorNormal") is not None:
+			virtual_xray.detector_normal_ref = np.asarray(_text_to_floats(geometry["detectorNormal"], 3), dtype=np.float32)
+		if geometry.get("detectorUp") is not None:
+			virtual_xray.detector_up_ref = np.asarray(_text_to_floats(geometry["detectorUp"], 3), dtype=np.float32)
+		if geometry.get("detectorShape") is not None:
+			virtual_xray.detector_shape_hw = [int(v) for v in _text_to_floats(geometry["detectorShape"], 2)]
+		if geometry.get("detectorPixelSize") is not None:
+			virtual_xray.detector_pixel_size_mm = _text_to_floats(geometry["detectorPixelSize"], 2)
+		if geometry.get("sourcePosition") is not None:
+			virtual_xray.source_position_ref = np.asarray(_text_to_floats(geometry["sourcePosition"], 3), dtype=np.float32)
+		if geometry.get("rayDirection") is not None:
+			virtual_xray.ray_direction_ref = np.asarray(_text_to_floats(geometry["rayDirection"], 3), dtype=np.float32)
+		virtual_xray.step_mm = float(geometry.get("stepMM", virtual_xray.step_mm))
+		if geometry.get("qualityProfile") is not None:
+			virtual_xray.quality_profile_name = str(geometry["qualityProfile"])
+		if geometry.get("depthWindowMode") is not None:
+			virtual_xray.depth_window_mode = str(geometry["depthWindowMode"])
+		if geometry.get("depthWindowMM") is not None:
+			virtual_xray.depth_window_mm = _text_to_floats(geometry["depthWindowMM"], 2)
+		if geometry.get("depthWindowOrigin") is not None:
+			virtual_xray.depth_window_origin_ref = np.asarray(_text_to_floats(geometry["depthWindowOrigin"], 3), dtype=np.float32)
+		if geometry.get("depthWindowAxis") is not None:
+			virtual_xray.depth_window_axis_ref = np.asarray(_text_to_floats(geometry["depthWindowAxis"], 3), dtype=np.float32)
+
+	source_defaults = sections.get("sourceDefaults", {})
+	if source_defaults:
+		if source_defaults.get("interpolation") is not None:
+			virtual_xray.source_interpolation = str(source_defaults["interpolation"])
+		virtual_xray.source_fill_value = _atmdl_read_optional_float(source_defaults.get("fillValue"), virtual_xray.source_fill_value)
+		if source_defaults.get("preprocessMode") is not None:
+			virtual_xray.source_preprocess_mode = str(source_defaults["preprocessMode"])
+		virtual_xray.source_preprocess_low_percentile = float(source_defaults.get("preprocessLowPercentile", virtual_xray.source_preprocess_low_percentile))
+		virtual_xray.source_preprocess_high_percentile = float(source_defaults.get("preprocessHighPercentile", virtual_xray.source_preprocess_high_percentile))
+		virtual_xray.source_preprocess_output_low = float(source_defaults.get("preprocessOutputLow", virtual_xray.source_preprocess_output_low))
+		virtual_xray.source_preprocess_output_high = float(source_defaults.get("preprocessOutputHigh", virtual_xray.source_preprocess_output_high))
+		virtual_xray.mesh_source_scalar_value = float(source_defaults.get("meshSourceScalarValue", virtual_xray.mesh_source_scalar_value))
+		if source_defaults.get("meshSourceMode") is not None:
+			virtual_xray.mesh_source_mode = str(source_defaults["meshSourceMode"])
+		virtual_xray.mesh_surface_thickness_mm = float(source_defaults.get("meshSurfaceThicknessMM", virtual_xray.mesh_surface_thickness_mm))
+
+	physics = sections.get("physics", {})
+	if physics:
+		virtual_xray.physics_mu_air = float(physics.get("muAir", virtual_xray.physics_mu_air))
+		virtual_xray.physics_mu_water = float(physics.get("muWater", virtual_xray.physics_mu_water))
+		virtual_xray.physics_hounsfield_air = float(physics.get("hounsfieldAir", virtual_xray.physics_hounsfield_air))
+		virtual_xray.physics_attenuation_scale = float(physics.get("attenuationScale", virtual_xray.physics_attenuation_scale))
+		virtual_xray.physics_source_energy_kev = float(physics.get("sourceEnergyKeV", virtual_xray.physics_source_energy_kev))
+		virtual_xray.physics_reference_energy_kev = float(physics.get("referenceEnergyKeV", virtual_xray.physics_reference_energy_kev))
+		virtual_xray.physics_attenuation_energy_exponent = float(physics.get("attenuationEnergyExponent", virtual_xray.physics_attenuation_energy_exponent))
+		if physics.get("outputMode") is not None:
+			virtual_xray.physics_output_mode = str(physics["outputMode"])
+		virtual_xray.physics_intensity_floor = float(physics.get("intensityFloor", virtual_xray.physics_intensity_floor))
+		if physics.get("sourceDistanceFalloffMode") is not None:
+			virtual_xray.physics_source_distance_falloff_mode = str(physics["sourceDistanceFalloffMode"])
+		virtual_xray.physics_source_distance_reference_mm = _atmdl_read_optional_float(physics.get("sourceDistanceReferenceMM"), virtual_xray.physics_source_distance_reference_mm)
+		virtual_xray.physics_source_distance_power = float(physics.get("sourceDistancePower", virtual_xray.physics_source_distance_power))
+		if physics.get("materialResponseMode") is not None:
+			virtual_xray.physics_material_response_mode = str(physics["materialResponseMode"])
+		virtual_xray.physics_bone_threshold_hu = _atmdl_read_optional_float(physics.get("boneThresholdHU"), virtual_xray.physics_bone_threshold_hu)
+		virtual_xray.physics_bone_threshold_softness = float(physics.get("boneThresholdSoftness", virtual_xray.physics_bone_threshold_softness))
+		virtual_xray.physics_material_window_center = _atmdl_read_optional_float(physics.get("materialWindowCenter"), virtual_xray.physics_material_window_center)
+		virtual_xray.physics_material_window_width = _atmdl_read_optional_float(physics.get("materialWindowWidth"), virtual_xray.physics_material_window_width)
+		if physics.get("materialWindowMode") is not None:
+			virtual_xray.physics_material_window_mode = str(physics["materialWindowMode"])
+		virtual_xray.physics_material_window_softness = float(physics.get("materialWindowSoftness", virtual_xray.physics_material_window_softness))
+
+	presentation = sections.get("presentation", {})
+	if presentation:
+		if presentation.get("mode") is not None:
+			virtual_xray.presentation_mode = str(presentation["mode"])
+		virtual_xray.presentation_invert = _atmdl_read_bool(presentation.get("invert"), virtual_xray.presentation_invert)
+		virtual_xray.presentation_gamma = float(presentation.get("gamma", virtual_xray.presentation_gamma))
+		virtual_xray.presentation_contrast = float(presentation.get("contrast", virtual_xray.presentation_contrast))
+		virtual_xray.presentation_robust_percentile = float(presentation.get("robustPercentile", virtual_xray.presentation_robust_percentile))
+		virtual_xray.presentation_window_center = _atmdl_read_optional_float(presentation.get("windowCenter"), virtual_xray.presentation_window_center)
+		virtual_xray.presentation_window_width = _atmdl_read_optional_float(presentation.get("windowWidth"), virtual_xray.presentation_window_width)
+		virtual_xray.presentation_overlay_annotations = _atmdl_read_bool(presentation.get("overlayAnnotations"), getattr(virtual_xray, "presentation_overlay_annotations", False))
+		virtual_xray.presentation_overlay_labels = _atmdl_read_bool(presentation.get("overlayLabels"), getattr(virtual_xray, "presentation_overlay_labels", False))
+		virtual_xray.presentation_overlay_cross_size_px = int(float(presentation.get("overlayCrossSizePx", getattr(virtual_xray, "presentation_overlay_cross_size_px", 6))))
+
+	for source_section in sections.get("sourceNodes", []):
+		path_text = source_section.get("childIndexPath", None)
+		if path_text is None:
+			continue
+		target = _resolve_child_index_path(virtual_xray, [int(v) for v in _text_to_floats(path_text)])
+		if target is None or not isinstance(target, (Volumetric, Mesh)):
+			continue
+		source_payload = {
+			"enabled": _atmdl_read_bool(source_section.get("enabled"), True),
+			"scalar_scale": float(source_section.get("scalarScale", 1.0)),
+			"scalar_bias": float(source_section.get("scalarBias", 0.0)),
+			"attenuation_multiplier": float(source_section.get("attenuationMultiplier", 1.0)),
+			"source_type": str(source_section.get("sourceType", "volumetric" if isinstance(target, Volumetric) else "mesh")).lower(),
+			"material_response_config": {
+				"enabled": False,
+				"mode": "linear",
+			},
+		}
+		material_response = source_section.get("material_response", {})
+		if material_response:
+			source_payload["material_response_config"] = {
+				"enabled": _atmdl_read_bool(material_response.get("enabled"), False),
+				"mode": str(material_response.get("mode", "linear")),
+				"bone_threshold_hu": _atmdl_read_optional_float(material_response.get("boneThresholdHU"), None),
+				"bone_threshold_softness": _atmdl_read_optional_float(material_response.get("boneThresholdSoftness"), None),
+				"window_center": _atmdl_read_optional_float(material_response.get("windowCenter"), None),
+				"window_width": _atmdl_read_optional_float(material_response.get("windowWidth"), None),
+				"window_mode": str(material_response.get("windowMode", "hard")),
+				"window_softness": _atmdl_read_optional_float(material_response.get("windowSoftness"), None),
+			}
+		if isinstance(target, Volumetric):
+			source_payload["interpolation_override"] = str(source_section.get("interpolationOverride", "default"))
+			source_payload["fill_value_override_enabled"] = _atmdl_read_bool(source_section.get("fillValueOverrideEnabled"), False)
+			source_payload["fill_value_override"] = float(source_section.get("fillValueOverride", 0.0))
+			source_payload["volume_backend"] = str(source_section.get("volumeBackend", "sampling"))
+		else:
+			source_payload["mesh_backend"] = str(source_section.get("meshBackend", "analytic_bvh"))
+			source_payload["mesh_mode"] = str(source_section.get("meshMode", "solid"))
+			source_payload["mesh_scalar_value"] = float(source_section.get("meshScalarValue", 1800.0))
+			source_payload["mesh_shell_thickness_mm"] = float(source_section.get("meshShellThicknessMM", 1.0))
+		_apply_source_payload(target, source_payload)
 
 
 def _instantiate_node_from_elem(elem, virtual_xray_root):
@@ -565,3 +1026,109 @@ def load_virtual_xray_scene(path, target_virtual_xray=None):
 		if source_payload is not None and isinstance(obj, (Volumetric, Mesh)):
 			_apply_source_payload(obj, source_payload)
 	return virtual_xray
+
+
+def _write_virtual_xray_atmdl(writer_cls, stream, obj, indent, context):
+	"""Serialize one VirtualXRay subtree into an ATMDL plugin block."""
+	from dpVision.parsers.parserATMDL import _atmdl_escape_string
+
+	ind = writer_cls._ind(indent)
+	stream.write(f"{ind}virtualXRay {{\n")
+	writer_cls._write_common_props(stream, obj, indent + 1)
+	if context.get("virt_rtg_write_base64", True):
+		payload64 = _encode_payload64(_virtual_xray_atmdl_payload(obj))
+		stream.write(f'{writer_cls._ind(indent + 1)}virtRTGConfig64 "{_atmdl_escape_string(payload64)}"\n')
+	if context.get("virt_rtg_write_text_sections", True):
+		_write_virtual_xray_text_sections(writer_cls, stream, obj, indent + 1)
+		_write_source_node_sections(writer_cls, stream, obj, indent + 1)
+	writer_cls._write_children(stream, obj, indent + 1, context)
+	stream.write(f"{ind}}}\n")
+	return True
+
+
+def _parse_virtual_xray_atmdl(parser, stream, token):
+	"""Parse one plugin-defined VirtualXRay ATMDL block with standard child objects."""
+	slowo = parser.skip_comments(stream)
+
+	if slowo is None:
+		print("Osiagnieto koniec pliku podczas parsowania obiektu 'virtualXRay'")
+		return None
+
+	if slowo != "{":
+		print("BLAD. Oczekiwano znaku { odczytano: " + slowo)
+		return None
+
+	opis = {}
+	kids = []
+	sections = {
+		"sourceNodes": [],
+	}
+
+	while slowo != "}":
+		slowo = parser.skip_comments(stream)
+
+		if slowo is None:
+			print("Osiagnieto koniec pliku podczas parsowania obiektu 'virtualXRay'")
+			return None
+		elif slowo == "}":
+			print("Znaleziono klamre zamykajaca obiekt 'virtualXRay'")
+		elif slowo in {"label", "descr", "virtRTGConfig64"}:
+			tekst = parser.parseType_string(stream)
+			if tekst:
+				opis[slowo] = tekst
+		elif slowo in {"geometry", "sourceDefaults", "physics", "presentation"}:
+			parsed = _parse_section_mapping(parser, stream)
+			if parsed is None:
+				return None
+			sections[slowo] = parsed
+		elif slowo == "sourceNode":
+			parsed = _parse_section_mapping(parser, stream)
+			if parsed is None:
+				return None
+			sections["sourceNodes"].append(parsed)
+		else:
+			tmp = parser.parseObject(stream, slowo)
+			if tmp is not None:
+				kids.append(tmp)
+			else:
+				print("BLAD. Nierozpoznany symbol " + slowo)
+				return None
+
+	obj = VirtualXRay()
+	if "label" in opis:
+		obj.label = opis["label"]
+	if "descr" in opis:
+		obj.description = opis["descr"]
+	for kid in kids:
+		parser.add_kid(obj, kid)
+	if "virtRTGConfig64" in opis:
+		_apply_virtual_xray_atmdl_payload(obj, _decode_payload64(opis["virtRTGConfig64"]))
+	_apply_virtual_xray_text_sections(obj, sections)
+	return obj
+
+
+def register_atmdl_integration():
+	"""Register ATMDL read/write hooks for the VirtualXRay plugin object."""
+	global _ATMDL_INTEGRATION_REGISTERED
+	if _ATMDL_INTEGRATION_REGISTERED:
+		return
+	from dpVision.parsers.parserATMDL import ParserATMDL, WriterATMDL
+
+	WriterATMDL.register_writer(
+		lambda obj: isinstance(obj, VirtualXRay),
+		_write_virtual_xray_atmdl,
+	)
+	ParserATMDL.register_object_reader(ATMDL_VIRTUAL_XRAY_TOKENS, _parse_virtual_xray_atmdl)
+	_ATMDL_INTEGRATION_REGISTERED = True
+
+
+def unregister_atmdl_integration():
+	"""Remove previously registered ATMDL read/write hooks for VirtualXRay."""
+	global _ATMDL_INTEGRATION_REGISTERED
+	if not _ATMDL_INTEGRATION_REGISTERED:
+		return
+	from dpVision.parsers.parserATMDL import ParserATMDL, WriterATMDL
+
+	WriterATMDL.unregister_writer(_write_virtual_xray_atmdl)
+	ParserATMDL.unregister_object_reader(_parse_virtual_xray_atmdl)
+	_ATMDL_INTEGRATION_REGISTERED = False
