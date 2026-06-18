@@ -229,6 +229,118 @@ DEFAULT_PROJECTORS = (
 )
 
 
+def _json_ready_overlay_value(value):
+	"""Convert nested overlay metadata into a JSON-serializable structure."""
+	if isinstance(value, np.ndarray):
+		return _json_ready_overlay_value(value.tolist())
+	if isinstance(value, np.generic):
+		return value.item()
+	if isinstance(value, dict):
+		return {str(key): _json_ready_overlay_value(item) for key, item in value.items()}
+	if isinstance(value, (list, tuple)):
+		return [_json_ready_overlay_value(item) for item in value]
+	return value
+
+
+def _overlay_style_to_payload(style: XRayOverlayStyle | None):
+	"""Serialize one optional overlay style into a JSON-ready mapping."""
+	if style is None:
+		return None
+	return {
+		"color_rgba": [int(channel) for channel in style.color_rgba],
+		"line_width_px": int(style.line_width_px),
+		"marker_size_px": int(style.marker_size_px),
+	}
+
+
+def _overlay_style_from_payload(payload):
+	"""Deserialize one optional overlay style payload."""
+	if payload is None:
+		return None
+	return XRayOverlayStyle(
+		color_rgba=tuple(int(channel) for channel in payload.get("color_rgba", [255, 0, 0, 255])),
+		line_width_px=max(1, int(payload.get("line_width_px", 1))),
+		marker_size_px=max(1, int(payload.get("marker_size_px", 6))),
+	)
+
+
+def overlay_projection_set_to_payload(projection_set: XRayOverlayProjectionSet | None):
+	"""Serialize one projected overlay set into a JSON-ready mapping."""
+	if projection_set is None:
+		return None
+	payload_items = []
+	for item in getattr(projection_set, "items", []):
+		item_payload = {
+			"kind": str(getattr(item, "kind", "")),
+			"label": str(getattr(item, "label", "")),
+			"visible": bool(getattr(item, "visible", True)),
+			"in_bounds": bool(getattr(item, "in_bounds", True)),
+			"metadata": _json_ready_overlay_value(getattr(item, "metadata", {})),
+			"style": _overlay_style_to_payload(getattr(item, "style", None)),
+		}
+		if isinstance(item, XRayOverlayCross):
+			item_payload["type"] = "cross"
+			item_payload["pixel_uv"] = None if item.pixel_uv is None else [float(item.pixel_uv[0]), float(item.pixel_uv[1])]
+		elif isinstance(item, XRayOverlayPolyline):
+			item_payload["type"] = "polyline"
+			item_payload["pixel_uvs"] = [
+				[float(pixel_uv[0]), float(pixel_uv[1])]
+				for pixel_uv in item.pixel_uvs
+			]
+			item_payload["closed"] = bool(item.closed)
+		else:
+			item_payload["type"] = "item"
+		payload_items.append(item_payload)
+	return {
+		"detector_shape_hw": [
+			int(projection_set.detector_shape_hw[0]),
+			int(projection_set.detector_shape_hw[1]),
+		],
+		"items": payload_items,
+	}
+
+
+def overlay_projection_set_from_payload(payload):
+	"""Deserialize one projected overlay set from a JSON-ready mapping."""
+	if not payload:
+		return None
+	items = []
+	for item_payload in payload.get("items", []):
+		common_kwargs = {
+			"kind": str(item_payload.get("kind", "")),
+			"label": str(item_payload.get("label", "")),
+			"visible": bool(item_payload.get("visible", True)),
+			"in_bounds": bool(item_payload.get("in_bounds", True)),
+			"metadata": dict(item_payload.get("metadata", {})),
+		}
+		style = _overlay_style_from_payload(item_payload.get("style", None))
+		item_type = str(item_payload.get("type", "item")).lower()
+		if item_type == "cross":
+			pixel_uv = item_payload.get("pixel_uv", None)
+			items.append(XRayOverlayCross(
+				pixel_uv=None if pixel_uv is None else (float(pixel_uv[0]), float(pixel_uv[1])),
+				style=style,
+				**common_kwargs,
+			))
+		elif item_type == "polyline":
+			items.append(XRayOverlayPolyline(
+				pixel_uvs=[
+					(float(pixel_uv[0]), float(pixel_uv[1]))
+					for pixel_uv in item_payload.get("pixel_uvs", [])
+				],
+				style=style,
+				closed=bool(item_payload.get("closed", False)),
+				**common_kwargs,
+			))
+		else:
+			items.append(XRayOverlayItem(**common_kwargs))
+	detector_shape_hw = payload.get("detector_shape_hw", [1, 1])
+	return XRayOverlayProjectionSet(
+		detector_shape_hw=(int(detector_shape_hw[0]), int(detector_shape_hw[1])),
+		items=items,
+	)
+
+
 def build_overlay_projection_set(descendants: Iterable[object], context: XRayAnnotationProjectionContext, projectors=None):
 	"""Project supported scene annotations into a detector-space overlay set."""
 	projectors = tuple(DEFAULT_PROJECTORS if projectors is None else projectors)

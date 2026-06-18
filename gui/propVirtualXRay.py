@@ -11,7 +11,6 @@ import weakref
 
 import numpy as np
 from PyQt5.QtCore import Qt, QEventLoop, pyqtSlot
-from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import (
 	QApplication,
 	QCheckBox,
@@ -39,7 +38,7 @@ from dpVision.gui.propBaseObject import PropBaseObject
 from dpVision.gui.propWidget import PropWidget
 from ..virtualXRay import VirtualXRay
 from ..detectorImage import DetectorImage
-from ..xray.xrayAnnotationOverlay import XRayOverlayCross, XRayOverlayPolyline
+from .detectorImageViewer import DetectorImageViewerChild
 from ..xray.xraySource import get_xray_material_response_config, set_xray_material_response_config
 from ..xray.xraySource import ensure_xray_source_config
 
@@ -425,7 +424,8 @@ class PropVirtualXRay(PropWidget):
 		self.tabs.addTab(physTab, "Physics")
 
 		# ── Presentation tab ───────────────────────────────────────────
-		presentationTab = QWidget()
+		presentationTab = QWidget(self)
+		self._presentationTab = presentationTab
 		presentationTabLayout = QVBoxLayout(presentationTab)
 		presentationTabLayout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
@@ -492,7 +492,6 @@ class PropVirtualXRay(PropWidget):
 		presentation_layout.addRow("Cross size [px]:", self.presentationOverlayCrossSizeSpin)
 		presentationTabLayout.addWidget(presentationGroup)
 		presentationTabLayout.addStretch(1)
-		self.tabs.addTab(presentationTab, "Presentation")
 
 		# ── Run tab ────────────────────────────────────────────────────
 		runTab = QWidget()
@@ -507,10 +506,12 @@ class PropVirtualXRay(PropWidget):
 		self.refreshButton = QPushButton("Refresh")
 		self.runSimulationButton = QPushButton("Run Simulation")
 		self.updateDisplayButton = QPushButton("Update display")
+		self.openDetectorImageButton = QPushButton("Open Detector Image")
 		self.cacheStageCombo = QComboBox()
 		self.cacheStageCombo.addItem("Raw detector", "raw")
 		self.cacheStageCombo.addItem("Line integral", "line_integral")
 		self.cacheFormatCombo = QComboBox()
+		self.cacheFormatCombo.addItem("Projection package (*.npz)", ".npz")
 		self.cacheFormatCombo.addItem("NumPy (*.npy)", ".npy")
 		self.cacheFormatCombo.addItem("Text (*.txt)", ".txt")
 		self.cacheFormatCombo.addItem("CSV (*.csv)", ".csv")
@@ -519,13 +520,20 @@ class PropVirtualXRay(PropWidget):
 		self.importProjectionButton = QPushButton("Import projection")
 		self.exportSourcesButton = QPushButton("Export per-source")
 		self.updateDisplayButton.setEnabled(False)
+		self.openDetectorImageButton.setEnabled(False)
 		self.renderInfoLabel = QLabel("")
 		self.renderInfoLabel.setWordWrap(True)
 		self.renderInfoLabel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 		actions_layout.addWidget(self.runSimulationButton)
 		actions_layout.addWidget(self.updateDisplayButton)
+		actions_layout.addWidget(self.openDetectorImageButton)
 		actions_layout.addWidget(self.refreshButton)
 		runTabLayout.addWidget(actionsWidget)
+		self.presentationInfoLabel = QLabel(
+			"Presentation controls are handled by the generated DetectorImage object."
+		)
+		self.presentationInfoLabel.setWordWrap(True)
+		runTabLayout.addWidget(self.presentationInfoLabel)
 		cacheWidget = QWidget()
 		cacheWidget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
 		cacheLayout = QHBoxLayout(cacheWidget)
@@ -995,6 +1003,7 @@ class PropVirtualXRay(PropWidget):
 		self.refreshButton.clicked.connect(self.on_refresh_requested)
 		self.runSimulationButton.clicked.connect(self.on_run_simulation)
 		self.updateDisplayButton.clicked.connect(self.on_update_display)
+		self.openDetectorImageButton.clicked.connect(self.on_open_detector_image)
 		self.exportProjectionButton.clicked.connect(self.on_export_projection_requested)
 		self.importProjectionButton.clicked.connect(self.on_import_projection_requested)
 		self.exportSourcesButton.clicked.connect(self.on_export_source_projections_requested)
@@ -1187,6 +1196,7 @@ class PropVirtualXRay(PropWidget):
 		self.volumesLabel.setText(str(len(obj.collect_xray_objects())))
 		self.renderInfoLabel.setText(obj.info())
 		self.updateDisplayButton.setEnabled(obj.last_raw_projection is not None)
+		self.openDetectorImageButton.setEnabled(isinstance(getattr(obj, "last_projection_image", None), DetectorImage))
 		self.exportProjectionButton.setEnabled(obj.last_raw_projection is not None or getattr(obj, "last_line_integral_projection", None) is not None)
 		self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
 		self._update_mode_visibility(obj)
@@ -1203,6 +1213,12 @@ class PropVirtualXRay(PropWidget):
 		self.updateProperties()
 		AP.mainWin.dock["workspace"].refreshAll()
 		AP.updateAllViews()
+
+	def _after_presentation_change(self, obj: VirtualXRay):
+		"""Refresh presentation controls and propagate them to the detector image cache."""
+		self._after_change(obj)
+		if obj is not None and getattr(obj, "last_raw_projection", None) is not None:
+			self._display_image_array(obj, auto_window=False)
 
 	@pyqtSlot(str)
 	def on_mode_changed(self, mode):
@@ -1397,35 +1413,35 @@ class PropVirtualXRay(PropWidget):
 		"""Store the currently selected presentation mode."""
 		obj = self.obj_ref()
 		obj.presentation_mode = str(value)
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot(bool)
 	def on_presentation_invert_changed(self, value):
 		"""Store the inversion state of the presentation model."""
 		obj = self.obj_ref()
 		obj.presentation_invert = bool(value)
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot(float)
 	def on_presentation_gamma_changed(self, value):
 		"""Store the gamma applied by the presentation model."""
 		obj = self.obj_ref()
 		obj.presentation_gamma = max(0.05, float(value))
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot(float)
 	def on_presentation_contrast_changed(self, value):
 		"""Store the contrast applied by the presentation model."""
 		obj = self.obj_ref()
 		obj.presentation_contrast = max(0.05, float(value))
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot(float)
 	def on_presentation_percentile_changed(self, value):
 		"""Store the robust percentile used by film-like and digital presentation."""
 		obj = self.obj_ref()
 		obj.presentation_robust_percentile = min(100.0, max(50.0, float(value)))
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot()
 	def on_presentation_window_changed(self):
@@ -1435,28 +1451,28 @@ class PropVirtualXRay(PropWidget):
 		width = float(self.presentationWindowWidthSpin.value())
 		obj.presentation_window_center = center if width > 0.0 else None
 		obj.presentation_window_width = width if width > 0.0 else None
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot(bool)
 	def on_presentation_overlay_annotations_changed(self, value):
 		"""Store whether projected annotations should be overlaid on the display image."""
 		obj = self.obj_ref()
 		obj.presentation_overlay_annotations = bool(value)
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot(bool)
 	def on_presentation_overlay_labels_changed(self, value):
 		"""Store whether projected annotation labels should be painted on the display image."""
 		obj = self.obj_ref()
 		obj.presentation_overlay_labels = bool(value)
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot(int)
 	def on_presentation_overlay_cross_size_changed(self, value):
 		"""Store the marker size used when projected annotations are overlaid on the display image."""
 		obj = self.obj_ref()
 		obj.presentation_overlay_cross_size_px = max(1, int(value))
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot()
 	def on_apply_presentation_preset(self):
@@ -1465,7 +1481,7 @@ class PropVirtualXRay(PropWidget):
 		if obj is None:
 			return
 		obj.apply_presentation_preset(self.presentationPresetCombo.currentText())
-		self._after_change(obj)
+		self._after_presentation_change(obj)
 
 	@pyqtSlot()
 	def on_refresh_requested(self):
@@ -1506,21 +1522,13 @@ class PropVirtualXRay(PropWidget):
 		obj.source_fill_value = float(self.sourceFillValueSpin.value()) if self.sourceUseFillValueCheck.isChecked() else None
 		self._after_change(obj)
 
-	@pyqtSlot()
-	def _display_image_array(self, obj, display_image):
+	def _display_image_array(self, obj, auto_window=False):
 		"""Create or update one plugin-local detector image object from the cached raw projection."""
 		if obj.last_raw_projection is None:
 			return
 		image_obj = getattr(obj, "last_projection_image", None)
 		if isinstance(image_obj, DetectorImage) and self._is_image_in_workspace(image_obj):
-			image_obj.setArray(obj.last_raw_projection, source_stage="raw", auto_window=False)
-			image_obj.display_invert = bool(obj.presentation_invert)
-			image_obj.display_gamma = float(obj.presentation_gamma)
-			image_obj.display_contrast = float(obj.presentation_contrast)
-			image_obj.display_robust_percentile = float(obj.presentation_robust_percentile)
-			if obj.presentation_window_center is not None and obj.presentation_window_width is not None:
-				image_obj.window_center = float(obj.presentation_window_center)
-				image_obj.window_width = max(1e-6, float(obj.presentation_window_width))
+			image_obj.sync_from_virtual_xray(obj, auto_window=auto_window)
 			image_obj.label = f"{obj.label}_projection"
 			image_obj.source_virtual_xray_label = str(obj.label)
 			AP.mainWin.dock["workspace"].refreshAll()
@@ -1528,18 +1536,7 @@ class PropVirtualXRay(PropWidget):
 			return
 
 		image_obj = DetectorImage()
-		image_obj.setArray(obj.last_raw_projection, source_stage="raw", auto_window=False)
-		image_obj.label = f"{obj.label}_projection"
-		image_obj.source_virtual_xray_label = str(obj.label)
-		image_obj.display_invert = bool(obj.presentation_invert)
-		image_obj.display_gamma = float(obj.presentation_gamma)
-		image_obj.display_contrast = float(obj.presentation_contrast)
-		image_obj.display_robust_percentile = float(obj.presentation_robust_percentile)
-		if obj.presentation_window_center is not None and obj.presentation_window_width is not None:
-			image_obj.window_center = float(obj.presentation_window_center)
-			image_obj.window_width = max(1e-6, float(obj.presentation_window_width))
-		else:
-			image_obj.auto_window(robust_percentile=float(obj.presentation_robust_percentile))
+		image_obj.sync_from_virtual_xray(obj, auto_window=auto_window)
 		obj.last_projection_image = image_obj
 		AP.addObject(image_obj)
 		self._refresh_image_viewers(image_obj)
@@ -1549,88 +1546,6 @@ class PropVirtualXRay(PropWidget):
 		if image_obj.parent is not None:
 			return True
 		return any(item is image_obj for item in AP.mainWin.workspace.m_data)
-
-	def _paint_projected_overlays(self, qimage, obj):
-		"""Paint generic projected overlay primitives on the final display image."""
-		if qimage is None or not bool(getattr(obj, "presentation_overlay_annotations", False)):
-			return
-
-		annotation_set = getattr(obj, "last_projected_annotations", None)
-		if annotation_set is None or not getattr(annotation_set, "items", None):
-			return
-
-		painter = QPainter(qimage)
-		try:
-			painter.setRenderHint(QPainter.Antialiasing, True)
-			painter.setRenderHint(QPainter.TextAntialiasing, True)
-			for item in annotation_set.items:
-				if not item.visible:
-					continue
-				self._paint_overlay_item(painter, qimage, obj, item)
-		finally:
-			painter.end()
-
-	def _paint_overlay_item(self, painter, qimage, obj, item):
-		"""Paint one generic overlay item and its optional label."""
-		if isinstance(item, XRayOverlayCross):
-			self._paint_overlay_cross(painter, qimage, item)
-			self._paint_overlay_label(painter, qimage, obj, item, item.pixel_uv, item.style.marker_size_px if item.style else 6)
-			return
-		if isinstance(item, XRayOverlayPolyline):
-			self._paint_overlay_polyline(painter, qimage, item)
-			anchor_uv = item.pixel_uvs[0] if item.pixel_uvs else None
-			self._paint_overlay_label(painter, qimage, obj, item, anchor_uv, item.style.marker_size_px if item.style else 6)
-
-	def _paint_overlay_cross(self, painter, qimage, item: XRayOverlayCross):
-		"""Paint one cross overlay item on the projection image."""
-		if item.pixel_uv is None or not item.in_bounds:
-			return
-		style = item.style
-		color = QColor(*(style.color_rgba if style is not None else (255, 0, 0, 255)))
-		size_px = max(1, int(style.marker_size_px if style is not None else 6))
-		line_width_px = max(1, int(style.line_width_px if style is not None else 1))
-		x_coord = int(round(item.pixel_uv[0]))
-		y_coord = qimage.height() - 1 - int(round(item.pixel_uv[1]))
-		painter.setPen(QPen(color, line_width_px))
-		painter.drawLine(x_coord - size_px, y_coord, x_coord + size_px, y_coord)
-		painter.drawLine(x_coord, y_coord - size_px, x_coord, y_coord + size_px)
-
-	def _paint_overlay_polyline(self, painter, qimage, item: XRayOverlayPolyline):
-		"""Paint one detector-space polyline overlay."""
-		if not item.pixel_uvs:
-			return
-		style = item.style
-		color = QColor(*(style.color_rgba if style is not None else (255, 0, 0, 255)))
-		line_width_px = max(1, int(style.line_width_px if style is not None else 1))
-		painter.setPen(QPen(color, line_width_px))
-		points_xy = [
-			(int(round(pixel_uv[0])), qimage.height() - 1 - int(round(pixel_uv[1])))
-			for pixel_uv in item.pixel_uvs
-		]
-		for point_a, point_b in zip(points_xy, points_xy[1:]):
-			painter.drawLine(point_a[0], point_a[1], point_b[0], point_b[1])
-		if item.closed and len(points_xy) > 2:
-			painter.drawLine(points_xy[-1][0], points_xy[-1][1], points_xy[0][0], points_xy[0][1])
-
-	def _paint_overlay_label(self, painter, qimage, obj, item, anchor_uv, marker_size_px):
-		"""Paint one optional overlay label next to the supplied anchor point."""
-		if not bool(getattr(obj, "presentation_overlay_labels", False)):
-			return
-		if anchor_uv is None or not item.in_bounds:
-			return
-		label_text = str(getattr(item, "label", "")).strip()
-		if not label_text:
-			return
-		style = getattr(item, "style", None)
-		color_rgba = style.color_rgba if style is not None else (255, 0, 0, 255)
-		text_color = QColor(*color_rgba)
-		x_coord = int(round(anchor_uv[0])) + max(4, int(marker_size_px)) + 2
-		y_coord = qimage.height() - 1 - int(round(anchor_uv[1])) - 4
-		painter.setPen(QPen(QColor(0, 0, 0, 220)))
-		for dx_offset, dy_offset in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-			painter.drawText(x_coord + dx_offset, y_coord + dy_offset, label_text)
-		painter.setPen(QPen(text_color))
-		painter.drawText(x_coord, y_coord, label_text)
 
 	def _freeze_gl_viewers(self):
 		"""Temporarily disable GL viewer updates while image objects are inserted into the workspace."""
@@ -1650,6 +1565,23 @@ class PropVirtualXRay(PropWidget):
 
 		AP.updateProperties()
 
+	@pyqtSlot()
+	def on_open_detector_image(self):
+		"""Open the current detector image in a dedicated 2D viewer window."""
+		obj = self.obj_ref()
+		if obj is None:
+			return
+		image_obj = getattr(obj, "last_projection_image", None)
+		if not isinstance(image_obj, DetectorImage):
+			QMessageBox.information(self, "Detector Image", "No detector image is available yet.")
+			return
+		child = DetectorImageViewerChild(image_obj, AP.mainWin.mdiArea)
+		child.setMinimumSize(400, 300)
+		sub_window = AP.mainWin.mdiArea.addSubWindow(child)
+		sub_window.setWindowTitle(f"Detector Image: {image_obj.label}")
+		sub_window.showNormal()
+		sub_window.update()
+
 	def _selected_cache_stage(self):
 		"""Return the currently selected cache stage identifier."""
 		stage = self.cacheStageCombo.currentData()
@@ -1666,7 +1598,7 @@ class PropVirtualXRay(PropWidget):
 
 	def _cache_dialog_filter(self):
 		"""Return one file-dialog filter for supported projection cache formats."""
-		return "Projection cache (*.npy *.txt *.csv *.tsv);;NumPy (*.npy);;Text (*.txt);;CSV (*.csv);;TSV (*.tsv)"
+		return "Projection cache (*.npz *.npy *.txt *.csv *.tsv);;Projection package (*.npz);;NumPy (*.npy);;Text (*.txt);;CSV (*.csv);;TSV (*.tsv)"
 
 	def on_run_simulation(self):
 		"""Run one X-ray projection, cache the raw result and insert the display image into the workspace."""
@@ -1693,12 +1625,12 @@ class PropVirtualXRay(PropWidget):
 		try:
 			try:
 				_, stats = obj.project_and_cache(return_stats=True, progress_callback=_on_progress)
-				display_image = obj.apply_presentation()
 			except Exception as exc:
 				QMessageBox.critical(self, "Simulation error", str(exc))
 				return
-			self._display_image_array(obj, display_image)
+			self._display_image_array(obj, auto_window=True)
 			self.updateDisplayButton.setEnabled(True)
+			self.openDetectorImageButton.setEnabled(isinstance(getattr(obj, "last_projection_image", None), DetectorImage))
 			self.exportProjectionButton.setEnabled(True)
 			self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
 			projected_annotations = getattr(getattr(obj, "last_projected_annotations", None), "items", [])
@@ -1731,18 +1663,18 @@ class PropVirtualXRay(PropWidget):
 		QApplication.setOverrideCursor(Qt.WaitCursor)
 		try:
 			try:
-				display_image = obj.apply_presentation()
+				if obj.last_raw_projection is None:
+					return
 			except Exception as exc:
 				QMessageBox.critical(self, "Update display error", str(exc))
 				return
-			if display_image is None:
-				return
-			self._display_image_array(obj, display_image)
+			self._display_image_array(obj, auto_window=False)
 		finally:
 			QApplication.restoreOverrideCursor()
 			for viewer in gl_viewers:
 				viewer.setUpdatesEnabled(True)
 			self.updateDisplayButton.setEnabled(obj.last_raw_projection is not None)
+			self.openDetectorImageButton.setEnabled(isinstance(getattr(obj, "last_projection_image", None), DetectorImage))
 			self.exportProjectionButton.setEnabled(obj.last_raw_projection is not None or getattr(obj, "last_line_integral_projection", None) is not None)
 			self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
 			AP.updateAllViews()
@@ -1791,13 +1723,13 @@ class PropVirtualXRay(PropWidget):
 		try:
 			try:
 				obj.import_cached_projection(file_path, stage=stage)
-				display_image = obj.apply_presentation()
 			except Exception as exc:
 				QMessageBox.critical(self, "Projection import error", str(exc))
 				return
-			if display_image is not None:
-				self._display_image_array(obj, display_image)
+			if obj.last_raw_projection is not None:
+				self._display_image_array(obj, auto_window=True)
 			self.updateDisplayButton.setEnabled(obj.last_raw_projection is not None)
+			self.openDetectorImageButton.setEnabled(isinstance(getattr(obj, "last_projection_image", None), DetectorImage))
 			self.exportProjectionButton.setEnabled(obj.last_raw_projection is not None or getattr(obj, "last_line_integral_projection", None) is not None)
 			self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
 			self.renderInfoLabel.setText(f"{obj.info()}\nImported {self._cache_stage_label(stage)} projection from:\n{file_path}")

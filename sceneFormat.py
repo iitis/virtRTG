@@ -17,7 +17,12 @@ from dpVision.annotationPoint import AnnotationPoint
 from dpVision.volumetric import SliceMetadata
 from dpVision.parser import Parser
 
+from .detectorImage import DetectorImage
 from .virtualXRay import VirtualXRay
+from .xray.xrayAnnotationOverlay import (
+	overlay_projection_set_from_payload,
+	overlay_projection_set_to_payload,
+)
 from .xray.xraySource import (
 	XRayMaterialResponseConfig,
 	ensure_xray_source_config,
@@ -29,7 +34,6 @@ from .xray.xraySource import (
 SCENE_FORMAT_NAME = "virtRTG-scene"
 SCENE_FORMAT_VERSION = 2
 ATMDL_VIRTUAL_XRAY_TOKENS = ("virtualXRay", "virtual_xray", "vxray")
-
 _ATMDL_INTEGRATION_REGISTERED = False
 
 
@@ -93,59 +97,6 @@ def _array_from_payload(payload):
 	if array.size != expected_size:
 		raise ValueError("Projection cache payload size does not match its declared shape.")
 	return array.reshape(shape).astype(np.float32, copy=False)
-
-
-def _projection_cache_payload(virtual_xray):
-	"""Return one JSON-ready payload for cached detector buffers."""
-	cache_payload = virtual_xray.projection_cache_payload()
-	if cache_payload is None:
-		return None
-	payload = {
-		"schema": "virtRTG-projection-cache",
-		"version": 1,
-		"raw_projection": None,
-		"line_integral_projection": None,
-		"source_projections": [],
-	}
-	if cache_payload.get("raw_projection", None) is not None:
-		payload["raw_projection"] = _array_payload(cache_payload["raw_projection"])
-	if cache_payload.get("line_integral_projection", None) is not None:
-		payload["line_integral_projection"] = _array_payload(cache_payload["line_integral_projection"])
-	for source_payload in cache_payload.get("source_projections", []):
-		payload["source_projections"].append({
-			"source_index": int(source_payload.get("source_index", 0)),
-			"label": str(source_payload.get("label", "")),
-			"source_type": str(source_payload.get("source_type", "")),
-			"raw_projection": (
-				None if source_payload.get("raw_projection", None) is None
-				else _array_payload(source_payload["raw_projection"])
-			),
-			"line_integral_projection": (
-				None if source_payload.get("line_integral_projection", None) is None
-				else _array_payload(source_payload["line_integral_projection"])
-			),
-		})
-	return payload
-
-
-def _apply_projection_cache_payload(virtual_xray, payload):
-	"""Decode one cached projection payload and apply it to the object."""
-	if not payload:
-		return
-	cache_payload = {
-		"raw_projection": _array_from_payload(payload.get("raw_projection", None)),
-		"line_integral_projection": _array_from_payload(payload.get("line_integral_projection", None)),
-		"source_projections": [],
-	}
-	for source_payload in payload.get("source_projections", []):
-		cache_payload["source_projections"].append({
-			"source_index": int(source_payload.get("source_index", 0)),
-			"label": str(source_payload.get("label", "")),
-			"source_type": str(source_payload.get("source_type", "")),
-			"raw_projection": _array_from_payload(source_payload.get("raw_projection", None)),
-			"line_integral_projection": _array_from_payload(source_payload.get("line_integral_projection", None)),
-		})
-	virtual_xray.apply_projection_cache_payload(cache_payload)
 
 
 def _atmdl_bool_text(value):
@@ -371,6 +322,37 @@ def _annotation_payload(obj):
 	return None
 
 
+def _detector_image_payload(detector_image):
+	"""Return one JSON-ready payload for one `DetectorImage` scene object."""
+	return {
+		"schema": "virtRTG-detector-image",
+		"version": 1,
+		"source_stage": str(getattr(detector_image, "source_stage", "raw")),
+		"source_virtual_xray_label": str(getattr(detector_image, "source_virtual_xray_label", "")),
+		"raw_array": None if getattr(detector_image, "raw_array", None) is None else _array_payload(detector_image.raw_array),
+		"presentation": {
+			"mode": str(getattr(detector_image, "presentation_mode", "digital")),
+			"invert": bool(getattr(detector_image, "presentation_invert", False)),
+			"gamma": float(getattr(detector_image, "presentation_gamma", 1.0)),
+			"contrast": float(getattr(detector_image, "presentation_contrast", 1.0)),
+			"robust_percentile": float(getattr(detector_image, "presentation_robust_percentile", 99.5)),
+			"window_center": getattr(detector_image, "presentation_window_center", None),
+			"window_width": getattr(detector_image, "presentation_window_width", None),
+			"overlay_annotations": bool(getattr(detector_image, "presentation_overlay_annotations", False)),
+			"overlay_labels": bool(getattr(detector_image, "presentation_overlay_labels", False)),
+			"overlay_cross_size_px": int(getattr(detector_image, "presentation_overlay_cross_size_px", 6)),
+			"display_only_window_range": bool(getattr(detector_image, "display_only_window_range", False)),
+			"transfer_points_pct": [
+				[float(x_value), float(y_value)]
+				for x_value, y_value in getattr(detector_image, "transfer_points_pct", [(0.0, 0.0), (100.0, 100.0)])
+			],
+		},
+		"projected_annotations": overlay_projection_set_to_payload(
+			getattr(detector_image, "overlay_projection_set", None)
+		),
+	}
+
+
 def _virtual_xray_payload(virtual_xray):
 	"""Return one JSON-ready payload for the VirtualXRay root node."""
 	return {
@@ -437,7 +419,6 @@ def _virtual_xray_payload(virtual_xray):
 			"overlay_labels": bool(getattr(virtual_xray, "presentation_overlay_labels", False)),
 			"overlay_cross_size_px": int(getattr(virtual_xray, "presentation_overlay_cross_size_px", 6)),
 		},
-		"projection_cache": _projection_cache_payload(virtual_xray),
 	}
 
 
@@ -445,6 +426,8 @@ def _iter_export_nodes(virtual_xray, node=None):
 	"""Yield exportable descendants while treating nested VirtualXRay nodes as separate scenes."""
 	node = virtual_xray if node is None else node
 	for child in node.children():
+		if isinstance(child, DetectorImage):
+			continue
 		yield child
 		if child.__class__.__name__ == "VirtualXRay":
 			continue
@@ -454,6 +437,8 @@ def _iter_export_nodes(virtual_xray, node=None):
 def _iter_export_child_objects(virtual_xray):
 	"""Yield standard descendants of one VirtualXRay, skipping nested sub-scenes."""
 	for child in virtual_xray.children():
+		if isinstance(child, DetectorImage):
+			continue
 		yield child
 		if isinstance(child, VirtualXRay):
 			continue
@@ -566,6 +551,10 @@ def build_virtual_xray_scene_xml(virtual_xray):
 			payload_elem = ET.SubElement(elem, "virtRTG")
 			payload_elem.set("encoding", "json")
 			payload_elem.text = _json_text(_virtual_xray_payload(virtual_xray))
+		elif isinstance(obj, DetectorImage):
+			payload_elem = ET.SubElement(elem, "detectorImage")
+			payload_elem.set("encoding", "json")
+			payload_elem.text = _json_text(_detector_image_payload(obj))
 		elif isinstance(obj, (Volumetric, Mesh)):
 			payload_elem = ET.SubElement(elem, "virtRTGSource")
 			payload_elem.set("encoding", "json")
@@ -668,7 +657,51 @@ def _apply_virtual_xray_payload(virtual_xray, payload):
 	virtual_xray.presentation_overlay_annotations = bool(presentation.get("overlay_annotations", getattr(virtual_xray, "presentation_overlay_annotations", False)))
 	virtual_xray.presentation_overlay_labels = bool(presentation.get("overlay_labels", getattr(virtual_xray, "presentation_overlay_labels", False)))
 	virtual_xray.presentation_overlay_cross_size_px = int(presentation.get("overlay_cross_size_px", getattr(virtual_xray, "presentation_overlay_cross_size_px", 6)))
-	_apply_projection_cache_payload(virtual_xray, payload.get("projection_cache", None))
+
+
+def _apply_detector_image_payload(detector_image, payload):
+	"""Apply one serialized detector-image payload to an existing object."""
+	detector_image.source_stage = str(payload.get("source_stage", getattr(detector_image, "source_stage", "raw")))
+	detector_image.source_virtual_xray_label = str(
+		payload.get("source_virtual_xray_label", getattr(detector_image, "source_virtual_xray_label", ""))
+	)
+	raw_array = _array_from_payload(payload.get("raw_array", None))
+	if raw_array is not None:
+		detector_image.setArray(raw_array, source_stage=detector_image.source_stage, auto_window=False)
+	presentation = payload.get("presentation", {})
+	detector_image.presentation_mode = str(presentation.get("mode", detector_image.presentation_mode))
+	detector_image.presentation_invert = bool(presentation.get("invert", detector_image.presentation_invert))
+	detector_image.presentation_gamma = float(presentation.get("gamma", detector_image.presentation_gamma))
+	detector_image.presentation_contrast = float(presentation.get("contrast", detector_image.presentation_contrast))
+	detector_image.presentation_robust_percentile = float(
+		presentation.get("robust_percentile", detector_image.presentation_robust_percentile)
+	)
+	detector_image.presentation_window_center = presentation.get(
+		"window_center",
+		detector_image.presentation_window_center,
+	)
+	detector_image.presentation_window_width = presentation.get(
+		"window_width",
+		detector_image.presentation_window_width,
+	)
+	detector_image.presentation_overlay_annotations = bool(
+		presentation.get("overlay_annotations", detector_image.presentation_overlay_annotations)
+	)
+	detector_image.presentation_overlay_labels = bool(
+		presentation.get("overlay_labels", detector_image.presentation_overlay_labels)
+	)
+	detector_image.presentation_overlay_cross_size_px = int(
+		presentation.get("overlay_cross_size_px", detector_image.presentation_overlay_cross_size_px)
+	)
+	detector_image.display_only_window_range = bool(
+		presentation.get("display_only_window_range", detector_image.display_only_window_range)
+	)
+	detector_image.set_transfer_points_pct(
+		presentation.get("transfer_points_pct", detector_image.transfer_points_pct)
+	)
+	detector_image.overlay_projection_set = overlay_projection_set_from_payload(
+		payload.get("projected_annotations", None)
+	)
 
 
 def _apply_source_payload(obj, payload):
@@ -1059,6 +1092,8 @@ def _instantiate_node_from_elem(elem, virtual_xray_root):
 		return _instantiate_source_from_payload(_node_payload_json(elem, "virtRTGSource") or {})
 	if class_name == "Mesh":
 		return _instantiate_source_from_payload(_node_payload_json(elem, "virtRTGSource") or {})
+	if class_name == "DetectorImage":
+		return DetectorImage()
 	if class_name == "AnnotationPoint":
 		payload = _node_payload_json(elem, "payload") or {}
 		obj = AnnotationPoint(point=payload.get("point", [0.0, 0.0, 0.0]), vector=payload.get("vector", None))
@@ -1109,6 +1144,9 @@ def load_virtual_xray_scene(path, target_virtual_xray=None):
 		source_payload = _node_payload_json(elem, "virtRTGSource")
 		if source_payload is not None and isinstance(obj, (Volumetric, Mesh)):
 			_apply_source_payload(obj, source_payload)
+		detector_payload = _node_payload_json(elem, "detectorImage")
+		if detector_payload is not None and isinstance(obj, DetectorImage):
+			_apply_detector_image_payload(obj, detector_payload)
 	return virtual_xray
 
 
@@ -1127,6 +1165,11 @@ def _write_virtual_xray_atmdl(writer_cls, stream, obj, indent, context):
 		_write_source_node_sections(writer_cls, stream, obj, indent + 1)
 	writer_cls._write_children(stream, obj, indent + 1, context)
 	stream.write(f"{ind}}}\n")
+	return True
+
+
+def _write_detector_image_atmdl(writer_cls, stream, obj, indent, context):
+	"""Skip `DetectorImage` during ATMDL export until a dedicated file format exists."""
 	return True
 
 
@@ -1202,6 +1245,10 @@ def register_atmdl_integration():
 		lambda obj: isinstance(obj, VirtualXRay),
 		_write_virtual_xray_atmdl,
 	)
+	WriterATMDL.register_writer(
+		lambda obj: isinstance(obj, DetectorImage),
+		_write_detector_image_atmdl,
+	)
 	ParserATMDL.register_object_reader(ATMDL_VIRTUAL_XRAY_TOKENS, _parse_virtual_xray_atmdl)
 	_ATMDL_INTEGRATION_REGISTERED = True
 
@@ -1214,5 +1261,6 @@ def unregister_atmdl_integration():
 	from dpVision.parsers.parserATMDL import ParserATMDL, WriterATMDL
 
 	WriterATMDL.unregister_writer(_write_virtual_xray_atmdl)
+	WriterATMDL.unregister_writer(_write_detector_image_atmdl)
 	ParserATMDL.unregister_object_reader(_parse_virtual_xray_atmdl)
 	_ATMDL_INTEGRATION_REGISTERED = False

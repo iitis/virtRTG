@@ -15,6 +15,11 @@ from plugins.virtRTG.xray.xrayProjection import (
 	XRayProjectionQualityProfile,
 	XRayScene,
 )
+from plugins.virtRTG.xray.xrayAnnotationOverlay import (
+	XRayOverlayCross,
+	XRayOverlayProjectionSet,
+	XRayOverlayStyle,
+)
 from plugins.virtRTG.virtualXRay import VirtualXRay
 
 
@@ -265,6 +270,44 @@ def test_virtual_xray_cached_projection_roundtrip_supports_npy_and_text(tmp_path
 	assert np.allclose(line_loaded, expected, atol=1e-6)
 	assert np.allclose(virtual_xray.last_line_integral_projection, expected, atol=1e-6)
 	assert np.allclose(virtual_xray.last_raw_projection, expected, atol=1e-6)
+
+
+def test_virtual_xray_cached_projection_npz_roundtrip_restores_overlay_metadata(tmp_path):
+	"""Persist one projection package as `.npz` together with projected overlays and metadata."""
+	virtual_xray = VirtualXRay()
+	expected = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+	virtual_xray.last_raw_projection = expected.copy()
+	virtual_xray.last_projected_annotations = XRayOverlayProjectionSet(
+		detector_shape_hw=(2, 2),
+		items=[
+			XRayOverlayCross(
+				kind="AnnotationPoint",
+				label="A",
+				pixel_uv=(0.5, 1.5),
+				style=XRayOverlayStyle(color_rgba=(255, 0, 0, 255), line_width_px=2, marker_size_px=7),
+				metadata={"status": "projected", "source_point_ref": [1.0, 2.0, 3.0]},
+			)
+		],
+	)
+
+	export_path = tmp_path / "projection_bundle.npz"
+	virtual_xray.export_cached_projection(export_path, stage="raw")
+
+	virtual_xray.last_raw_projection = None
+	virtual_xray.last_projected_annotations = None
+
+	loaded = virtual_xray.import_cached_projection(export_path, stage="line_integral")
+
+	assert np.allclose(loaded, expected, atol=1e-6)
+	assert np.allclose(virtual_xray.last_raw_projection, expected, atol=1e-6)
+	assert virtual_xray.last_projected_annotations is not None
+	assert virtual_xray.last_projected_annotations.detector_shape_hw == (2, 2)
+	assert len(virtual_xray.last_projected_annotations.items) == 1
+	item = virtual_xray.last_projected_annotations.items[0]
+	assert item.label == "A"
+	assert item.kind == "AnnotationPoint"
+	assert item.pixel_uv == (0.5, 1.5)
+	assert item.metadata["status"] == "projected"
 
 
 def test_scene_sources_inherit_global_material_response_by_default():

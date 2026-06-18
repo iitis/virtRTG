@@ -13,7 +13,7 @@ from dpVision.parsers.parserATMDL import ParserATMDL, WriterATMDL
 
 from plugins.virtRTG.sceneFormat import register_atmdl_integration, unregister_atmdl_integration
 from plugins.virtRTG.virtualXRay import VirtualXRay
-from plugins.virtRTG.xray.xrayProjection import XRaySourceProjection
+from plugins.virtRTG.detectorImage import DetectorImage
 
 
 def _make_mesh(label="mesh-source"):
@@ -39,21 +39,20 @@ def test_virtual_xray_atmdl_roundtrip_with_standard_mesh_child(tmp_path):
 		virtual_xray.projection_mode = "parallel"
 		virtual_xray.physics_source_energy_kev = 92.0
 		virtual_xray.presentation_mode = "film"
-		virtual_xray.last_raw_projection = np.array([[0.2, 0.4], [0.6, 0.8]], dtype=np.float32)
-		virtual_xray.last_line_integral_projection = np.array([[1.2, 1.4], [1.6, 1.8]], dtype=np.float32)
-		virtual_xray.last_source_projections = [
-			XRaySourceProjection(
-				source_index=0,
-				label="mesh-child",
-				source_type="MeshXRaySource",
-				line_integral_image=np.array([[0.3, 0.4], [0.5, 0.6]], dtype=np.float32),
-				detector_image=np.array([[0.03, 0.04], [0.05, 0.06]], dtype=np.float32),
-			),
-		]
+		virtual_xray.presentation_overlay_annotations = True
+		virtual_xray.presentation_overlay_labels = True
+		virtual_xray.presentation_overlay_cross_size_px = 11
+		virtual_xray.presentation_window_center = 12.5
+		virtual_xray.presentation_window_width = 44.0
 
 		frame = Transform()
 		frame.label = "source-frame"
 		virtual_xray.addChild(frame)
+
+		detector_image = DetectorImage()
+		detector_image.label = "cached-projection"
+		detector_image.setArray(np.array([[9.0]], dtype=np.float32), auto_window=False)
+		virtual_xray.addChild(detector_image)
 
 		loaded_mesh = Parser.load(str(mesh_path))
 		assert loaded_mesh is not None
@@ -87,9 +86,14 @@ def test_virtual_xray_atmdl_roundtrip_with_standard_mesh_child(tmp_path):
 		assert imported.projection_mode == "parallel"
 		assert imported.physics_source_energy_kev == 92.0
 		assert imported.presentation_mode == "film"
-		assert np.allclose(imported.last_raw_projection, virtual_xray.last_raw_projection, atol=1e-6)
-		assert np.allclose(imported.last_line_integral_projection, virtual_xray.last_line_integral_projection, atol=1e-6)
-		assert len(imported.last_source_projections) == 1
+		assert imported.presentation_overlay_annotations is True
+		assert imported.presentation_overlay_labels is True
+		assert imported.presentation_overlay_cross_size_px == 11
+		assert imported.presentation_window_center == 12.5
+		assert imported.presentation_window_width == 44.0
+		assert imported.last_raw_projection is None
+		assert imported.last_line_integral_projection is None
+		assert imported.last_source_projections == []
 
 		assert len(imported.children()) == 1
 		imported_frame = imported.children()[0]
@@ -109,6 +113,25 @@ def test_virtual_xray_atmdl_roundtrip_with_standard_mesh_child(tmp_path):
 		assert imported_mesh.xray_mesh_scalar_value == 1337.0
 		assert imported_mesh.xray_mesh_shell_thickness_mm == 2.25
 		np.testing.assert_allclose(imported_mesh.m_vertices.shape, loaded_mesh.m_vertices.shape)
+	finally:
+		unregister_atmdl_integration()
+
+
+def test_detector_image_is_explicitly_skipped_by_atmdl(tmp_path):
+	"""DetectorImage should be recognized by ATMDL but emit no payload until its own format exists."""
+	detector = DetectorImage()
+	detector.label = "det-image"
+	detector.setArray(np.array([[1.0, 2.0]], dtype=np.float32), auto_window=False)
+
+	unregister_atmdl_integration()
+	assert ParserATMDL.canSaveObject(detector) is False
+
+	register_atmdl_integration()
+	try:
+		assert ParserATMDL.canSaveObject(detector) is True
+		scene_path = tmp_path / "detector_image_skipped.atmdl"
+		assert WriterATMDL.save(detector, str(scene_path)) is True
+		assert Path(scene_path).read_text(encoding="utf-8") == "# ATMDL scene file\n\n"
 	finally:
 		unregister_atmdl_integration()
 

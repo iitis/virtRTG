@@ -37,6 +37,8 @@ from .xray.xrayProjection import (
 from .xray.xrayAnnotationOverlay import (
 	XRayAnnotationProjectionContext,
 	build_overlay_projection_set,
+	overlay_projection_set_from_payload,
+	overlay_projection_set_to_payload,
 )
 
 
@@ -719,12 +721,15 @@ class VirtualXRay(Object):
 
 	@staticmethod
 	def _save_projection_array(array, path):
-		"""Persist one 2D detector-space array to `.npy` or a text-based file."""
+		"""Persist one 2D detector-space array to `.npy`, `.npz`, or a text-based file."""
 		path = Path(path)
 		array = np.asarray(array, dtype=np.float32)
 		suffix = path.suffix.lower()
 		if suffix == ".npy":
 			np.save(path, array)
+			return path
+		if suffix == ".npz":
+			np.savez_compressed(path, image=array)
 			return path
 		delimiter = "," if suffix == ".csv" else None
 		if suffix in {".txt", ".csv", ".tsv"}:
@@ -732,43 +737,98 @@ class VirtualXRay(Object):
 				delimiter = "\t"
 			np.savetxt(path, array, fmt="%.9g", delimiter=delimiter)
 			return path
-		raise ValueError("Supported projection export formats are: .npy, .txt, .csv, .tsv.")
+		raise ValueError("Supported projection export formats are: .npy, .npz, .txt, .csv, .tsv.")
 
 	@staticmethod
 	def _load_projection_array(path):
-		"""Load one 2D detector-space array from `.npy` or a text-based file."""
+		"""Load one 2D detector-space array from `.npy`, `.npz`, or a text-based file."""
 		path = Path(path)
 		suffix = path.suffix.lower()
+		metadata = None
 		if suffix == ".npy":
 			array = np.load(path)
+		elif suffix == ".npz":
+			with np.load(path, allow_pickle=False) as archive:
+				if "image" in archive:
+					array = archive["image"]
+				elif len(archive.files) == 1:
+					array = archive[archive.files[0]]
+				else:
+					raise ValueError("Projection NPZ must contain an 'image' array.")
+				if "metadata_json" in archive:
+					metadata_raw = archive["metadata_json"]
+					metadata = json.loads(str(metadata_raw.tolist() if hasattr(metadata_raw, "tolist") else metadata_raw))
 		elif suffix in {".txt", ".csv", ".tsv"}:
 			delimiter = "," if suffix == ".csv" else None
 			if suffix == ".tsv":
 				delimiter = "\t"
 			array = np.loadtxt(path, delimiter=delimiter)
 		else:
-			raise ValueError("Supported projection import formats are: .npy, .txt, .csv, .tsv.")
+			raise ValueError("Supported projection import formats are: .npy, .npz, .txt, .csv, .tsv.")
 		array = np.asarray(array, dtype=np.float32)
 		if array.ndim != 2:
 			raise ValueError("Imported projection arrays must be 2D.")
-		return array
+		return array, metadata
 
 	def export_cached_projection(self, path, stage="raw"):
 		"""Save one cached detector-space projection array to disk."""
-		return self._save_projection_array(self._resolve_projection_cache(stage), path)
+		path = Path(path)
+		array = self._resolve_projection_cache(stage)
+		if path.suffix.lower() != ".npz":
+			return self._save_projection_array(array, path)
+		metadata = {
+			"schema": "virtRTG-projection-export",
+			"version": 1,
+			"stage": str(stage),
+			"source_virtual_xray_label": str(self.label),
+			"projected_annotations": overlay_projection_set_to_payload(
+				getattr(self, "last_projected_annotations", None)
+			),
+			"presentation_defaults": {
+				"mode": str(getattr(self, "presentation_mode", "digital")),
+				"invert": bool(getattr(self, "presentation_invert", False)),
+				"gamma": float(getattr(self, "presentation_gamma", 1.0)),
+				"contrast": float(getattr(self, "presentation_contrast", 1.0)),
+				"robust_percentile": float(getattr(self, "presentation_robust_percentile", 99.5)),
+				"window_center": getattr(self, "presentation_window_center", None),
+				"window_width": getattr(self, "presentation_window_width", None),
+				"overlay_annotations": bool(getattr(self, "presentation_overlay_annotations", False)),
+				"overlay_labels": bool(getattr(self, "presentation_overlay_labels", False)),
+				"overlay_cross_size_px": int(getattr(self, "presentation_overlay_cross_size_px", 6)),
+			},
+			"geometry_snapshot": {
+				"projection_mode": str(getattr(self, "projection_mode", "cone")),
+				"detector_shape_hw": [int(self.detector_shape_hw[0]), int(self.detector_shape_hw[1])],
+			},
+		}
+		np.savez_compressed(
+			path,
+			image=np.asarray(array, dtype=np.float32),
+			metadata_json=np.asarray(json.dumps(metadata, ensure_ascii=False), dtype=np.str_),
+		)
+		return path
 
 	def import_cached_projection(self, path, stage="raw"):
 		"""Load one cached detector-space projection array from disk into this object."""
 		self._ensure_projection_cache_defaults()
-		array = self._load_projection_array(path)
-		if str(stage).strip().lower() in {"line", "line_integral", "integral"}:
+		array, metadata = self._load_projection_array(path)
+		import_stage = str(stage).strip().lower()
+		if isinstance(metadata, dict):
+			import_stage = str(metadata.get("stage", import_stage)).strip().lower()
+		if import_stage in {"line", "line_integral", "integral"}:
 			self.last_line_integral_projection = array
 			self.last_raw_projection = self._line_integral_to_detector_image(array)
-		elif str(stage).strip().lower() in {"raw", "detector", "detector_image"}:
+		elif import_stage in {"raw", "detector", "detector_image"}:
 			self.last_raw_projection = array
+			self.last_line_integral_projection = None
 		else:
 			raise ValueError("stage must be one of: 'raw', 'detector', 'line_integral'.")
 		self.last_source_projections = []
+		self.last_projected_annotations = None
+		if isinstance(metadata, dict):
+			self.last_projected_annotations = overlay_projection_set_from_payload(
+				metadata.get("projected_annotations", None)
+			)
 		return array
 
 	def export_cached_source_projections(self, directory, stage="raw", file_format=".npy"):
@@ -779,8 +839,8 @@ class VirtualXRay(Object):
 		file_format = str(file_format).strip().lower()
 		if not file_format.startswith("."):
 			file_format = f".{file_format}"
-		if file_format not in {".npy", ".txt", ".csv", ".tsv"}:
-			raise ValueError("file_format must be one of: .npy, .txt, .csv, .tsv.")
+		if file_format not in {".npz", ".npy", ".txt", ".csv", ".tsv"}:
+			raise ValueError("file_format must be one of: .npz, .npy, .txt, .csv, .tsv.")
 		stage_name = str(stage).strip().lower()
 		exports = []
 		for source_projection in self.last_source_projections:
