@@ -13,6 +13,7 @@ from dpVision.parsers.parserATMDL import ParserATMDL, WriterATMDL
 
 from plugins.virtRTG.sceneFormat import register_atmdl_integration, unregister_atmdl_integration
 from plugins.virtRTG.virtualXRay import VirtualXRay
+from plugins.virtRTG.xray.xrayProjection import XRaySourceProjection
 
 
 def _make_mesh(label="mesh-source"):
@@ -38,6 +39,17 @@ def test_virtual_xray_atmdl_roundtrip_with_standard_mesh_child(tmp_path):
 		virtual_xray.projection_mode = "parallel"
 		virtual_xray.physics_source_energy_kev = 92.0
 		virtual_xray.presentation_mode = "film"
+		virtual_xray.last_raw_projection = np.array([[0.2, 0.4], [0.6, 0.8]], dtype=np.float32)
+		virtual_xray.last_line_integral_projection = np.array([[1.2, 1.4], [1.6, 1.8]], dtype=np.float32)
+		virtual_xray.last_source_projections = [
+			XRaySourceProjection(
+				source_index=0,
+				label="mesh-child",
+				source_type="MeshXRaySource",
+				line_integral_image=np.array([[0.3, 0.4], [0.5, 0.6]], dtype=np.float32),
+				detector_image=np.array([[0.03, 0.04], [0.05, 0.06]], dtype=np.float32),
+			),
+		]
 
 		frame = Transform()
 		frame.label = "source-frame"
@@ -75,6 +87,9 @@ def test_virtual_xray_atmdl_roundtrip_with_standard_mesh_child(tmp_path):
 		assert imported.projection_mode == "parallel"
 		assert imported.physics_source_energy_kev == 92.0
 		assert imported.presentation_mode == "film"
+		assert np.allclose(imported.last_raw_projection, virtual_xray.last_raw_projection, atol=1e-6)
+		assert np.allclose(imported.last_line_integral_projection, virtual_xray.last_line_integral_projection, atol=1e-6)
+		assert len(imported.last_source_projections) == 1
 
 		assert len(imported.children()) == 1
 		imported_frame = imported.children()[0]

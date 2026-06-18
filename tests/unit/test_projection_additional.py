@@ -15,6 +15,7 @@ from plugins.virtRTG.xray.xrayProjection import (
 	XRayProjectionQualityProfile,
 	XRayScene,
 )
+from plugins.virtRTG.virtualXRay import VirtualXRay
 
 
 class _ConstantBoxSource:
@@ -179,6 +180,43 @@ def test_scene_render_returns_presented_image_and_projection_stats():
 	assert "Detector:" in stats.format_report()
 
 
+def test_scene_project_capture_exposes_additive_per_source_line_integrals():
+	"""Return total and per-source detector maps so object contributions can be exported separately."""
+	geometry = XRayProjectionGeometry(
+		detector_origin_ref=[0.0, 0.0, -1.0],
+		detector_u_ref=[1.0, 0.0, 0.0],
+		detector_v_ref=[0.0, 1.0, 0.0],
+		detector_shape_hw=[1, 1],
+		ray_direction_ref=[0.0, 0.0, 1.0],
+		step_mm=1.0,
+	)
+	config = XRayProjectionConfig(
+		geometry=geometry,
+		physics_model=XRayPhysicsModel(output_mode="integral"),
+	)
+	scene = XRayScene.from_sample_sources([
+		_ConstantBoxSource(attenuation_value=0.5),
+		_ConstantBoxSource(attenuation_value=0.25),
+	])
+
+	capture = scene.project_capture(config=config, return_stats=True)
+
+	assert capture.stats is not None
+	assert capture.stats.source_count == 2
+	assert np.allclose(capture.line_integral_image, [[2.25]], atol=1e-6)
+	assert np.allclose(capture.detector_image, [[2.25]], atol=1e-6)
+	assert len(capture.source_projections) == 2
+	assert np.allclose(capture.source_projections[0].line_integral_image, [[1.5]], atol=1e-6)
+	assert np.allclose(capture.source_projections[1].line_integral_image, [[0.75]], atol=1e-6)
+	assert np.allclose(capture.source_projections[0].detector_image, [[1.5]], atol=1e-6)
+	assert np.allclose(capture.source_projections[1].detector_image, [[0.75]], atol=1e-6)
+	assert np.allclose(
+		capture.source_projections[0].line_integral_image + capture.source_projections[1].line_integral_image,
+		capture.line_integral_image,
+		atol=1e-6,
+	)
+
+
 def test_scene_project_respects_ray_depth_window_limits():
 	"""Clip slab marching to the configured ray-parameter interval."""
 	geometry = XRayProjectionGeometry(
@@ -200,6 +238,33 @@ def test_scene_project_respects_ray_depth_window_limits():
 	image = scene.project(config=config, return_stats=False)
 
 	assert np.allclose(image, [[0.5]], atol=1e-6)
+
+
+def test_virtual_xray_cached_projection_roundtrip_supports_npy_and_text(tmp_path):
+	"""Persist cached detector arrays as `.npy` and text files without presentation side effects."""
+	virtual_xray = VirtualXRay()
+	virtual_xray.projection_mode = "parallel"
+	expected = np.array([[1.0, 2.5], [3.25, 4.5]], dtype=np.float32)
+	virtual_xray.last_raw_projection = expected.copy()
+	virtual_xray.last_line_integral_projection = expected.copy()
+
+	raw_npy_path = tmp_path / "raw_projection.npy"
+	line_txt_path = tmp_path / "line_integral.txt"
+
+	virtual_xray.export_cached_projection(raw_npy_path, stage="raw")
+	virtual_xray.export_cached_projection(line_txt_path, stage="line_integral")
+
+	virtual_xray.last_raw_projection = None
+	virtual_xray.last_line_integral_projection = None
+
+	raw_loaded = virtual_xray.import_cached_projection(raw_npy_path, stage="raw")
+	assert np.allclose(raw_loaded, expected, atol=1e-6)
+	assert np.allclose(virtual_xray.last_raw_projection, expected, atol=1e-6)
+
+	line_loaded = virtual_xray.import_cached_projection(line_txt_path, stage="line_integral")
+	assert np.allclose(line_loaded, expected, atol=1e-6)
+	assert np.allclose(virtual_xray.last_line_integral_projection, expected, atol=1e-6)
+	assert np.allclose(virtual_xray.last_raw_projection, expected, atol=1e-6)
 
 
 def test_scene_sources_inherit_global_material_response_by_default():

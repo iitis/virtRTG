@@ -14,7 +14,9 @@ from dpVision.gui.contextMenu import ContextMenu
 from dpVision.annotationPath import AnnotationPath
 from dpVision.annotationPoint import AnnotationPoint
 from .virtualXRay import VirtualXRay
+from .detectorImage import DetectorImage
 from .gui.propVirtualXRay import PropVirtualXRay
+from .gui.propDetectorImage import PropDetectorImage
 from .sceneFormat import load_virtual_xray_scene, register_atmdl_integration, unregister_atmdl_integration
 
 import numpy as np
@@ -27,6 +29,7 @@ class VirtualRTG(PluginInterface):
 		self.setup = None
 		self._context_menu_factory = self._create_virtual_xray_context_menu
 		AP.mainWin.dock["properties"].properties_map[Object]['VirtualXRay'] = PropVirtualXRay
+		AP.mainWin.dock["properties"].properties_map[Object]['DetectorImage'] = PropDetectorImage
 		ContextMenu.register_extra_menu_factory(self._context_menu_factory)
 		#AP.mainWin.dock["properties"].properties_map[BaseObject]['Graph'] = PropGraph
 
@@ -48,6 +51,8 @@ class VirtualRTG(PluginInterface):
 		unregister_atmdl_integration()
 		self.remove_menu()
 		ContextMenu.unregister_extra_menu_factory(self._context_menu_factory)
+		AP.mainWin.dock["properties"].properties_map[Object].pop('VirtualXRay', None)
+		AP.mainWin.dock["properties"].properties_map[Object].pop('DetectorImage', None)
 		if self.panel:
 			AP.mainWin.removeDockWidget(self.panel);    
 		print( "Bye bye")

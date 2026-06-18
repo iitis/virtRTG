@@ -666,6 +666,27 @@ class XRayProjectionStats:
 		print(self.format_report())
 
 
+@dataclass
+class XRaySourceProjection:
+	"""Store one detector-space contribution produced by a single scene source."""
+
+	source_index: int
+	label: str
+	source_type: str
+	line_integral_image: np.ndarray
+	detector_image: np.ndarray
+
+
+@dataclass
+class XRayProjectionCapture:
+	"""Bundle total and per-source detector-space outputs for one projection call."""
+
+	line_integral_image: np.ndarray
+	detector_image: np.ndarray
+	source_projections: list[XRaySourceProjection] = field(default_factory=list)
+	stats: XRayProjectionStats | None = None
+
+
 
 @dataclass
 class XRayScene:
@@ -707,16 +728,32 @@ class XRayScene:
 		"""Return a projector bound to the sources stored in this scene."""
 		return XRayProjector(self.sample_sources)
 
+	def project_capture(self, config, return_stats=False, progress_callback=None):
+		"""Project the scene and return total plus per-source detector-space outputs."""
+		return self.build_projector().project_capture(
+			config=config,
+			return_stats=return_stats,
+			progress_callback=progress_callback,
+		)
+
 	def project(self, config, return_stats=False, progress_callback=None):
 		"""Project the scene using a single combined configuration object."""
-		return self.build_projector().project_config(config=config, return_stats=return_stats, progress_callback=progress_callback)
+		capture = self.project_capture(
+			config=config,
+			return_stats=return_stats,
+			progress_callback=progress_callback,
+		)
+		if return_stats:
+			return capture.detector_image, capture.stats
+		return capture.detector_image
 
 	def render(self, config, return_stats=False, progress_callback=None):
 		"""Project the scene and optionally apply the configured presentation model."""
 		if return_stats:
-			raw_image, stats = self.project(config=config, return_stats=True, progress_callback=progress_callback)
-			return config.apply_presentation(raw_image), stats
-		return config.apply_presentation(self.project(config=config, return_stats=False, progress_callback=progress_callback))
+			capture = self.project_capture(config=config, return_stats=True, progress_callback=progress_callback)
+			return config.apply_presentation(capture.detector_image), capture.stats
+		capture = self.project_capture(config=config, return_stats=False, progress_callback=progress_callback)
+		return config.apply_presentation(capture.detector_image)
 
 
 
@@ -728,6 +765,10 @@ class XRayProjector:
 		self.sample_sources = list(sample_sources)
 		if not self.sample_sources:
 			raise ValueError("sample_sources must contain at least one X-ray source.")
+		self._source_index_map = {
+			id(source): source_index
+			for source_index, source in enumerate(self.sample_sources)
+		}
 
 	def scene_bounds_world(self):
 		"""Return the world-space AABB covering every source registered in the projector."""
@@ -760,6 +801,18 @@ class XRayProjector:
 		ray_origin_world = detector_point_world
 		ray_direction_world = _normalize_vector(_transform_direction(reference_transform, geometry.ray_direction_ref))
 		return ray_origin_world, ray_direction_world
+
+	def project_capture(self, config, return_stats=False, progress_callback=None):
+		"""Project one configured scene and return total plus per-source detector outputs."""
+		if not isinstance(config, XRayProjectionConfig):
+			raise TypeError("config must be an instance of XRayProjectionConfig.")
+		return self.project(
+			geometry=config.effective_geometry(),
+			physics_model=config.physics_model,
+			reference_transform=config.reference_transform,
+			return_stats=return_stats,
+			progress_callback=progress_callback,
+		)
 
 	def project(self, geometry, physics_model, reference_transform=None, return_stats=False, progress_callback=None):
 		"""Project all sample sources through the provided X-ray geometry (vectorized slab marching)."""
@@ -852,6 +905,10 @@ class XRayProjector:
 		# Slab marching: one Python iteration per depth step, all active rays batched
 		_phase_timings["depth_clipping"] = float(perf_counter() - _t_depth_start)
 		projection_flat = np.zeros(n_pixels, dtype=np.float32)
+		per_source_projection_flat = [
+			np.zeros(n_pixels, dtype=np.float32)
+			for _ in self.sample_sources
+		]
 		total_sample_count = 0
 		traced_pixels = int(np.sum(hit_mask))
 
@@ -879,6 +936,7 @@ class XRayProjector:
 
 			_t_direct_start = perf_counter()
 			for source_idx, source in enumerate(direct_sources):
+				scene_source_index = int(self._source_index_map[id(source)])
 				source_progress_start = direct_progress_fraction[0]
 				source_progress_end = direct_progress_fraction[1]
 				if has_direct:
@@ -905,7 +963,9 @@ class XRayProjector:
 					detector_shape_hw=(height, width),
 				)
 				source_integrals, source_work_count = direct_integral
-				projection_flat[hit_indices] += np.asarray(source_integrals, dtype=np.float32)
+				source_integrals = np.asarray(source_integrals, dtype=np.float32)
+				projection_flat[hit_indices] += source_integrals
+				per_source_projection_flat[scene_source_index][hit_indices] += source_integrals
 				total_sample_count += int(source_work_count)
 				_t_src_elapsed = float(perf_counter() - _t_src_start)
 				_src_stat: dict = {
@@ -954,8 +1014,12 @@ class XRayProjector:
 					points_world = ray_origins[active_idx] + t_k_f * ray_directions[active_idx]
 					total_mu = np.zeros(len(active_idx), dtype=np.float32)
 					for source in marched_sources:
+						scene_source_index = int(self._source_index_map[id(source)])
 						source_physics_model = source.resolve_physics_model(physics_model)
-						total_mu += source.sample_attenuation_world(points_world, source_physics_model)
+						source_mu = source.sample_attenuation_world(points_world, source_physics_model)
+						source_increment = np.asarray(source_mu, dtype=np.float32) * step_mm
+						total_mu += np.asarray(source_mu, dtype=np.float32)
+						per_source_projection_flat[scene_source_index][active_idx] += source_increment
 					projection_flat[active_idx] += total_mu * step_mm
 					total_sample_count += len(active_idx)
 
@@ -983,34 +1047,59 @@ class XRayProjector:
 			projection_mode="cone" if geometry.is_cone_beam() else "parallel",
 		).reshape(height, width)
 		_phase_timings["physics_conversion"] = float(perf_counter() - _t_physics_start)
-
-		if not return_stats:
-			return projection
+		line_integral_image = projection_flat.reshape(height, width).astype(np.float32, copy=True)
+		source_projections = []
+		projection_mode_name = "cone" if geometry.is_cone_beam() else "parallel"
+		for source_index, source in enumerate(self.sample_sources):
+			source_label = getattr(
+				getattr(source, "mesh", None) or getattr(source, "volumetric", None),
+				"label",
+				type(source).__name__,
+			)
+			source_line_integral = per_source_projection_flat[source_index].reshape(height, width).astype(np.float32, copy=True)
+			source_detector_image = physics_model.integral_to_image(
+				per_source_projection_flat[source_index],
+				source_to_detector_distance_mm=source_to_detector_distance_mm,
+				projection_mode=projection_mode_name,
+			).reshape(height, width).astype(np.float32, copy=False)
+			source_projections.append(XRaySourceProjection(
+				source_index=int(source_index),
+				label=str(source_label),
+				source_type=type(source).__name__,
+				line_integral_image=source_line_integral,
+				detector_image=source_detector_image,
+			))
 
 		elapsed_seconds = perf_counter() - start_time
-		stats = XRayProjectionStats(
-			elapsed_seconds=float(elapsed_seconds),
-			total_pixels=n_pixels,
-			traced_pixels=traced_pixels,
-			total_sample_count=total_sample_count,
-			source_count=int(len(self.sample_sources)),
-			step_mm=step_mm,
-			projection_mode="cone" if geometry.is_cone_beam() else "parallel",
-			detector_shape_hw=(height, width),
-			depth_window_mode=depth_mode,
-			phase_timings=_phase_timings,
-			per_source_stats=_per_source_stats,
+		stats = None
+		if return_stats:
+			stats = XRayProjectionStats(
+				elapsed_seconds=float(elapsed_seconds),
+				total_pixels=n_pixels,
+				traced_pixels=traced_pixels,
+				total_sample_count=total_sample_count,
+				source_count=int(len(self.sample_sources)),
+				step_mm=step_mm,
+				projection_mode=projection_mode_name,
+				detector_shape_hw=(height, width),
+				depth_window_mode=depth_mode,
+				phase_timings=_phase_timings,
+				per_source_stats=_per_source_stats,
+			)
+		return XRayProjectionCapture(
+			line_integral_image=line_integral_image,
+			detector_image=projection.astype(np.float32, copy=False),
+			source_projections=source_projections,
+			stats=stats,
 		)
-		return projection, stats
 
 	def project_config(self, config, return_stats=False, progress_callback=None):
-		"""Project the scene using a higher-level configuration object."""
-		if not isinstance(config, XRayProjectionConfig):
-			raise TypeError("config must be an instance of XRayProjectionConfig.")
-		return self.project(
-			geometry=config.effective_geometry(),
-			physics_model=config.physics_model,
-			reference_transform=config.reference_transform,
+		"""Preserve the older API that returned only the combined detector image."""
+		capture = self.project_capture(
+			config=config,
 			return_stats=return_stats,
 			progress_callback=progress_callback,
 		)
+		if return_stats:
+			return capture.detector_image, capture.stats
+		return capture.detector_image

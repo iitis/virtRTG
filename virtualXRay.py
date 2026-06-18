@@ -32,6 +32,7 @@ from .xray.xrayProjection import (
 	XRayProjectionQualityProfile,
 	XRayScalarPreprocessor,
 	XRayScene,
+	XRaySourceProjection,
 )
 from .xray.xrayAnnotationOverlay import (
 	XRayAnnotationProjectionContext,
@@ -174,7 +175,9 @@ class VirtualXRay(Object):
 		self.depth_window_mm = [0.0, 0.0]
 		self.depth_window_origin_ref = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 		self.depth_window_axis_ref = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+		self.last_line_integral_projection = None
 		self.last_raw_projection = None
+		self.last_source_projections = []
 		self.last_projected_annotations = None
 		self.last_projection_image = None
 
@@ -292,6 +295,15 @@ class VirtualXRay(Object):
 			self.presentation_overlay_labels = False
 		if not hasattr(self, "presentation_overlay_cross_size_px"):
 			self.presentation_overlay_cross_size_px = 6
+
+	def _ensure_projection_cache_defaults(self):
+		"""Backfill runtime projection-cache attributes for older serialized objects."""
+		if not hasattr(self, "last_line_integral_projection"):
+			self.last_line_integral_projection = None
+		if not hasattr(self, "last_raw_projection"):
+			self.last_raw_projection = None
+		if not hasattr(self, "last_source_projections"):
+			self.last_source_projections = []
 
 	def child_transform_relative_to_self(self, child):
 		"""Return one descendant transform expressed in the local frame of this X-ray object."""
@@ -630,6 +642,15 @@ class VirtualXRay(Object):
 		"""Project all descendant X-ray sources using the current setup state."""
 		return self.build_scene().project(self.build_projection_config(), return_stats=return_stats)
 
+	def project_capture(self, return_stats=False, progress_callback=None):
+		"""Project the current scene and return total plus per-source detector-space outputs."""
+		self._ensure_projection_cache_defaults()
+		return self.build_scene().project_capture(
+			self.build_projection_config(),
+			return_stats=return_stats,
+			progress_callback=progress_callback,
+		)
+
 	def render_projection(self, return_stats=False):
 		"""Project the current scene and immediately apply the configured presentation model."""
 		return self.build_scene().render(self.build_projection_config(), return_stats=return_stats)
@@ -637,15 +658,215 @@ class VirtualXRay(Object):
 	def project_and_cache(self, return_stats=False, progress_callback=None):
 		"""Project the scene, store the raw result in `last_raw_projection`, and return it."""
 		self._ensure_annotation_projection_defaults()
-		if return_stats:
-			raw, stats = self.build_scene().project(self.build_projection_config(), return_stats=True, progress_callback=progress_callback)
-			self.last_raw_projection = np.asarray(raw, dtype=np.float32)
-			self.project_scene_annotations()
-			return self.last_raw_projection, stats
-		raw = self.build_scene().project(self.build_projection_config(), return_stats=False, progress_callback=progress_callback)
-		self.last_raw_projection = np.asarray(raw, dtype=np.float32)
+		self._ensure_projection_cache_defaults()
+		capture = self.project_capture(return_stats=return_stats, progress_callback=progress_callback)
+		self.last_line_integral_projection = np.asarray(capture.line_integral_image, dtype=np.float32)
+		self.last_raw_projection = np.asarray(capture.detector_image, dtype=np.float32)
+		self.last_source_projections = list(capture.source_projections)
 		self.project_scene_annotations()
+		if return_stats:
+			return self.last_raw_projection, capture.stats
 		return self.last_raw_projection
+
+	def _projection_mode_name(self):
+		"""Return the normalized projection mode name used by the current geometry."""
+		return "cone" if str(self.projection_mode).lower() == "cone" else "parallel"
+
+	def _source_to_detector_distance_map(self, geometry):
+		"""Return per-pixel source-to-detector distances for cone-beam detector conversion."""
+		if not geometry.is_cone_beam():
+			return None
+		height, width = int(geometry.detector_shape_hw[0]), int(geometry.detector_shape_hw[1])
+		detector_origin = np.asarray(geometry.detector_origin_ref, dtype=np.float32)
+		detector_u = np.asarray(geometry.detector_u_ref, dtype=np.float32)
+		detector_v = np.asarray(geometry.detector_v_ref, dtype=np.float32)
+		source_position = np.asarray(geometry.source_position_ref, dtype=np.float32)
+		col_grid, row_grid = np.meshgrid(
+			np.arange(width, dtype=np.float32),
+			np.arange(height, dtype=np.float32),
+		)
+		pixel_centers = (
+			detector_origin
+			+ detector_u * col_grid[:, :, np.newaxis]
+			+ detector_v * row_grid[:, :, np.newaxis]
+		).reshape(height * width, 3)
+		return np.linalg.norm(pixel_centers - source_position[np.newaxis, :], axis=1).astype(np.float32)
+
+	def _line_integral_to_detector_image(self, line_integral_image):
+		"""Convert one cached line-integral detector map into the current raw detector output."""
+		line_integral_image = np.asarray(line_integral_image, dtype=np.float32)
+		geometry = self.build_projection_config().effective_geometry()
+		distances = self._source_to_detector_distance_map(geometry)
+		return self.build_physics_model().integral_to_image(
+			line_integral_image.reshape(-1),
+			source_to_detector_distance_mm=distances,
+			projection_mode="cone" if geometry.is_cone_beam() else "parallel",
+		).reshape(line_integral_image.shape).astype(np.float32, copy=False)
+
+	def _resolve_projection_cache(self, stage):
+		"""Return the requested cached detector-space array."""
+		self._ensure_projection_cache_defaults()
+		stage_name = str(stage).strip().lower()
+		if stage_name in {"line", "line_integral", "integral"}:
+			if self.last_line_integral_projection is None:
+				raise ValueError("No cached line-integral projection is available.")
+			return np.asarray(self.last_line_integral_projection, dtype=np.float32)
+		if stage_name in {"raw", "detector", "detector_image"}:
+			if self.last_raw_projection is None:
+				raise ValueError("No cached raw detector projection is available.")
+			return np.asarray(self.last_raw_projection, dtype=np.float32)
+		raise ValueError("stage must be one of: 'raw', 'detector', 'line_integral'.")
+
+	@staticmethod
+	def _save_projection_array(array, path):
+		"""Persist one 2D detector-space array to `.npy` or a text-based file."""
+		path = Path(path)
+		array = np.asarray(array, dtype=np.float32)
+		suffix = path.suffix.lower()
+		if suffix == ".npy":
+			np.save(path, array)
+			return path
+		delimiter = "," if suffix == ".csv" else None
+		if suffix in {".txt", ".csv", ".tsv"}:
+			if suffix == ".tsv":
+				delimiter = "\t"
+			np.savetxt(path, array, fmt="%.9g", delimiter=delimiter)
+			return path
+		raise ValueError("Supported projection export formats are: .npy, .txt, .csv, .tsv.")
+
+	@staticmethod
+	def _load_projection_array(path):
+		"""Load one 2D detector-space array from `.npy` or a text-based file."""
+		path = Path(path)
+		suffix = path.suffix.lower()
+		if suffix == ".npy":
+			array = np.load(path)
+		elif suffix in {".txt", ".csv", ".tsv"}:
+			delimiter = "," if suffix == ".csv" else None
+			if suffix == ".tsv":
+				delimiter = "\t"
+			array = np.loadtxt(path, delimiter=delimiter)
+		else:
+			raise ValueError("Supported projection import formats are: .npy, .txt, .csv, .tsv.")
+		array = np.asarray(array, dtype=np.float32)
+		if array.ndim != 2:
+			raise ValueError("Imported projection arrays must be 2D.")
+		return array
+
+	def export_cached_projection(self, path, stage="raw"):
+		"""Save one cached detector-space projection array to disk."""
+		return self._save_projection_array(self._resolve_projection_cache(stage), path)
+
+	def import_cached_projection(self, path, stage="raw"):
+		"""Load one cached detector-space projection array from disk into this object."""
+		self._ensure_projection_cache_defaults()
+		array = self._load_projection_array(path)
+		if str(stage).strip().lower() in {"line", "line_integral", "integral"}:
+			self.last_line_integral_projection = array
+			self.last_raw_projection = self._line_integral_to_detector_image(array)
+		elif str(stage).strip().lower() in {"raw", "detector", "detector_image"}:
+			self.last_raw_projection = array
+		else:
+			raise ValueError("stage must be one of: 'raw', 'detector', 'line_integral'.")
+		self.last_source_projections = []
+		return array
+
+	def export_cached_source_projections(self, directory, stage="raw", file_format=".npy"):
+		"""Export one file per cached source contribution into the selected directory."""
+		self._ensure_projection_cache_defaults()
+		directory = Path(directory)
+		directory.mkdir(parents=True, exist_ok=True)
+		file_format = str(file_format).strip().lower()
+		if not file_format.startswith("."):
+			file_format = f".{file_format}"
+		if file_format not in {".npy", ".txt", ".csv", ".tsv"}:
+			raise ValueError("file_format must be one of: .npy, .txt, .csv, .tsv.")
+		stage_name = str(stage).strip().lower()
+		exports = []
+		for source_projection in self.last_source_projections:
+			source_label = "".join(
+				char if char.isalnum() or char in {"-", "_"} else "_"
+				for char in str(source_projection.label)
+			)
+			if stage_name in {"line", "line_integral", "integral"}:
+				array = source_projection.line_integral_image
+			elif stage_name in {"raw", "detector", "detector_image"}:
+				array = source_projection.detector_image
+			else:
+				raise ValueError("stage must be one of: 'raw', 'detector', 'line_integral'.")
+			export_path = directory / f"{source_projection.source_index:03d}_{source_label}{file_format}"
+			self._save_projection_array(array, export_path)
+			exports.append(export_path)
+		return exports
+
+	def projection_cache_payload(self):
+		"""Return one JSON-ready payload with the cached detector buffers, or `None`."""
+		self._ensure_projection_cache_defaults()
+		if self.last_raw_projection is None and self.last_line_integral_projection is None and not self.last_source_projections:
+			return None
+		payload = {
+			"schema": "virtRTG-projection-cache",
+			"version": 1,
+			"raw_projection": (
+				np.asarray(self.last_raw_projection, dtype=np.float32).copy()
+				if self.last_raw_projection is not None else None
+			),
+			"line_integral_projection": (
+				np.asarray(self.last_line_integral_projection, dtype=np.float32).copy()
+				if self.last_line_integral_projection is not None else None
+			),
+			"source_projections": [],
+		}
+		for source_projection in self.last_source_projections:
+			payload["source_projections"].append({
+				"source_index": int(source_projection.source_index),
+				"label": str(source_projection.label),
+				"source_type": str(source_projection.source_type),
+				"raw_projection": np.asarray(source_projection.detector_image, dtype=np.float32).copy(),
+				"line_integral_projection": np.asarray(source_projection.line_integral_image, dtype=np.float32).copy(),
+			})
+		return payload
+
+	def apply_projection_cache_payload(self, payload):
+		"""Restore cached detector buffers from one serialized payload mapping."""
+		self._ensure_projection_cache_defaults()
+		payload = {} if payload is None else dict(payload)
+		raw_projection = payload.get("raw_projection", None)
+		line_integral_projection = payload.get("line_integral_projection", None)
+		self.last_raw_projection = (
+			None if raw_projection is None
+			else np.asarray(raw_projection, dtype=np.float32)
+		)
+		self.last_line_integral_projection = (
+			None if line_integral_projection is None
+			else np.asarray(line_integral_projection, dtype=np.float32)
+		)
+		if self.last_raw_projection is None and self.last_line_integral_projection is not None:
+			self.last_raw_projection = self._line_integral_to_detector_image(self.last_line_integral_projection)
+		self.last_source_projections = []
+		for source_payload in payload.get("source_projections", []):
+			source_raw = source_payload.get("raw_projection", None)
+			source_line = source_payload.get("line_integral_projection", None)
+			source_raw_array = (
+				None if source_raw is None
+				else np.asarray(source_raw, dtype=np.float32)
+			)
+			source_line_array = (
+				None if source_line is None
+				else np.asarray(source_line, dtype=np.float32)
+			)
+			if source_raw_array is None and source_line_array is not None:
+				source_raw_array = self._line_integral_to_detector_image(source_line_array)
+			if source_raw_array is None or source_line_array is None:
+				continue
+			self.last_source_projections.append(XRaySourceProjection(
+				source_index=int(source_payload.get("source_index", len(self.last_source_projections))),
+				label=str(source_payload.get("label", f"source_{len(self.last_source_projections)}")),
+				source_type=str(source_payload.get("source_type", "unknown")),
+				line_integral_image=source_line_array,
+				detector_image=source_raw_array,
+			))
+		self.last_projection_image = None
 
 	def apply_presentation(self):
 		"""Apply the current presentation model to `last_raw_projection` without re-projecting.

@@ -7,11 +7,14 @@ import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+import numpy as np
+
 from dpVision import Transform, Volumetric
 from dpVision.parser import Parser
 
 from plugins.virtRTG.sceneFormat import build_virtual_xray_scene_xml, load_virtual_xray_scene, save_virtual_xray_scene
 from plugins.virtRTG.virtualXRay import VirtualXRay
+from plugins.virtRTG.xray.xrayProjection import XRaySourceProjection
 from plugins.virtRTG.xray.xraySource import (
 	XRayMaterialResponseConfig,
 	get_xray_material_response_config,
@@ -84,6 +87,17 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
 	virtual_xray.label = "vxray-roundtrip"
 	virtual_xray.presentation_mode = "film"
 	virtual_xray.physics_source_energy_kev = 85.0
+	virtual_xray.last_raw_projection = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float32)
+	virtual_xray.last_line_integral_projection = np.array([[1.1, 1.2], [1.3, 1.4]], dtype=np.float32)
+	virtual_xray.last_source_projections = [
+		XRaySourceProjection(
+			source_index=0,
+			label="imported-volume",
+			source_type="VolumetricXRaySource",
+			line_integral_image=np.array([[0.5, 0.6], [0.7, 0.8]], dtype=np.float32),
+			detector_image=np.array([[0.05, 0.06], [0.07, 0.08]], dtype=np.float32),
+		),
+	]
 
 	transform = Transform()
 	transform.label = "source-transform"
@@ -123,6 +137,15 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
 	assert imported_config.enabled is True
 	assert imported_config.mode == "piecewise_soft_tissue"
 	assert imported_config.window_width == 600.0
+	assert np.allclose(imported.last_raw_projection, virtual_xray.last_raw_projection, atol=1e-6)
+	assert np.allclose(imported.last_line_integral_projection, virtual_xray.last_line_integral_projection, atol=1e-6)
+	assert len(imported.last_source_projections) == 1
+	assert imported.last_source_projections[0].label == "imported-volume"
+	assert np.allclose(
+		imported.last_source_projections[0].line_integral_image,
+		virtual_xray.last_source_projections[0].line_integral_image,
+		atol=1e-6,
+	)
 
 
 def test_scene_export_prefers_last_saved_source_path_over_original_dicom_series(tmp_path):

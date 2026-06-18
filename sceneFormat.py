@@ -27,7 +27,7 @@ from .xray.xraySource import (
 
 
 SCENE_FORMAT_NAME = "virtRTG-scene"
-SCENE_FORMAT_VERSION = 1
+SCENE_FORMAT_VERSION = 2
 ATMDL_VIRTUAL_XRAY_TOKENS = ("virtualXRay", "virtual_xray", "vxray")
 
 _ATMDL_INTEGRATION_REGISTERED = False
@@ -64,6 +64,88 @@ def _decode_payload64(payload64):
 	"""Decode one URL-safe base64 JSON payload from ATMDL."""
 	raw = base64.urlsafe_b64decode(str(payload64).encode("ascii"))
 	return json.loads(raw.decode("utf-8"))
+
+
+def _array_payload(array):
+	"""Return one JSON-ready descriptor for a float32 detector array."""
+	array = np.asarray(array, dtype=np.float32)
+	if array.ndim != 2:
+		raise ValueError("Projection cache arrays must be 2D.")
+	return {
+		"dtype": "float32",
+		"shape": [int(array.shape[0]), int(array.shape[1])],
+		"data_b64": base64.b64encode(np.ascontiguousarray(array).tobytes()).decode("ascii"),
+	}
+
+
+def _array_from_payload(payload):
+	"""Decode one float32 detector array descriptor created by `_array_payload`."""
+	if payload is None:
+		return None
+	shape = [int(v) for v in payload.get("shape", [])]
+	if len(shape) != 2:
+		raise ValueError("Projection cache payload is missing a valid 2D shape.")
+	if str(payload.get("dtype", "float32")).lower() != "float32":
+		raise ValueError("Projection cache payload currently supports only float32 arrays.")
+	raw = base64.b64decode(str(payload.get("data_b64", "")).encode("ascii"))
+	array = np.frombuffer(raw, dtype=np.float32)
+	expected_size = int(shape[0]) * int(shape[1])
+	if array.size != expected_size:
+		raise ValueError("Projection cache payload size does not match its declared shape.")
+	return array.reshape(shape).astype(np.float32, copy=False)
+
+
+def _projection_cache_payload(virtual_xray):
+	"""Return one JSON-ready payload for cached detector buffers."""
+	cache_payload = virtual_xray.projection_cache_payload()
+	if cache_payload is None:
+		return None
+	payload = {
+		"schema": "virtRTG-projection-cache",
+		"version": 1,
+		"raw_projection": None,
+		"line_integral_projection": None,
+		"source_projections": [],
+	}
+	if cache_payload.get("raw_projection", None) is not None:
+		payload["raw_projection"] = _array_payload(cache_payload["raw_projection"])
+	if cache_payload.get("line_integral_projection", None) is not None:
+		payload["line_integral_projection"] = _array_payload(cache_payload["line_integral_projection"])
+	for source_payload in cache_payload.get("source_projections", []):
+		payload["source_projections"].append({
+			"source_index": int(source_payload.get("source_index", 0)),
+			"label": str(source_payload.get("label", "")),
+			"source_type": str(source_payload.get("source_type", "")),
+			"raw_projection": (
+				None if source_payload.get("raw_projection", None) is None
+				else _array_payload(source_payload["raw_projection"])
+			),
+			"line_integral_projection": (
+				None if source_payload.get("line_integral_projection", None) is None
+				else _array_payload(source_payload["line_integral_projection"])
+			),
+		})
+	return payload
+
+
+def _apply_projection_cache_payload(virtual_xray, payload):
+	"""Decode one cached projection payload and apply it to the object."""
+	if not payload:
+		return
+	cache_payload = {
+		"raw_projection": _array_from_payload(payload.get("raw_projection", None)),
+		"line_integral_projection": _array_from_payload(payload.get("line_integral_projection", None)),
+		"source_projections": [],
+	}
+	for source_payload in payload.get("source_projections", []):
+		cache_payload["source_projections"].append({
+			"source_index": int(source_payload.get("source_index", 0)),
+			"label": str(source_payload.get("label", "")),
+			"source_type": str(source_payload.get("source_type", "")),
+			"raw_projection": _array_from_payload(source_payload.get("raw_projection", None)),
+			"line_integral_projection": _array_from_payload(source_payload.get("line_integral_projection", None)),
+		})
+	virtual_xray.apply_projection_cache_payload(cache_payload)
 
 
 def _atmdl_bool_text(value):
@@ -293,7 +375,7 @@ def _virtual_xray_payload(virtual_xray):
 	"""Return one JSON-ready payload for the VirtualXRay root node."""
 	return {
 		"schema": "virtRTG-virtual-xray",
-		"version": 1,
+		"version": 2,
 		"geometry": {
 			"projection_mode": str(virtual_xray.projection_mode),
 			"detector_center_ref": list(np.asarray(virtual_xray.detector_center_ref, dtype=np.float64).reshape(3)),
@@ -355,6 +437,7 @@ def _virtual_xray_payload(virtual_xray):
 			"overlay_labels": bool(getattr(virtual_xray, "presentation_overlay_labels", False)),
 			"overlay_cross_size_px": int(getattr(virtual_xray, "presentation_overlay_cross_size_px", 6)),
 		},
+		"projection_cache": _projection_cache_payload(virtual_xray),
 	}
 
 
@@ -423,7 +506,7 @@ def _virtual_xray_atmdl_payload(virtual_xray):
 		)
 	return {
 		"schema": "virtRTG-atmdl-virtual-xray",
-		"version": 1,
+		"version": 2,
 		"virtual_xray": _virtual_xray_payload(virtual_xray),
 		"source_nodes": source_nodes,
 	}
@@ -585,6 +668,7 @@ def _apply_virtual_xray_payload(virtual_xray, payload):
 	virtual_xray.presentation_overlay_annotations = bool(presentation.get("overlay_annotations", getattr(virtual_xray, "presentation_overlay_annotations", False)))
 	virtual_xray.presentation_overlay_labels = bool(presentation.get("overlay_labels", getattr(virtual_xray, "presentation_overlay_labels", False)))
 	virtual_xray.presentation_overlay_cross_size_px = int(presentation.get("overlay_cross_size_px", getattr(virtual_xray, "presentation_overlay_cross_size_px", 6)))
+	_apply_projection_cache_payload(virtual_xray, payload.get("projection_cache", None))
 
 
 def _apply_source_payload(obj, payload):

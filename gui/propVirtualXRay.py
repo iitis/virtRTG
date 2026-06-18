@@ -11,7 +11,7 @@ import weakref
 
 import numpy as np
 from PyQt5.QtCore import Qt, QEventLoop, pyqtSlot
-from PyQt5.QtGui import QColor, QImage, QPainter, QPen
+from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import (
 	QApplication,
 	QCheckBox,
@@ -29,17 +29,19 @@ from PyQt5.QtWidgets import (
 	QVBoxLayout,
 	QWidget,
 	QDoubleSpinBox,
+	QFileDialog,
 	QSizePolicy,
 )
 
-from dpVision import AP, Image, Mesh, Volumetric
+from dpVision import AP, Mesh, Volumetric
 from dpVision.gui.multiSpinBox import MultiSpinBox
 from dpVision.gui.propBaseObject import PropBaseObject
 from dpVision.gui.propWidget import PropWidget
 from ..virtualXRay import VirtualXRay
+from ..detectorImage import DetectorImage
 from ..xray.xrayAnnotationOverlay import XRayOverlayCross, XRayOverlayPolyline
 from ..xray.xraySource import get_xray_material_response_config, set_xray_material_response_config
-from ..xray.xraySource import normalize_projection_to_uint8, ensure_xray_source_config
+from ..xray.xraySource import ensure_xray_source_config
 
 class _CollapsibleGroup(QWidget):
 	"""Simple collapsible section: a toggle button + a hidden/shown body widget."""
@@ -505,6 +507,17 @@ class PropVirtualXRay(PropWidget):
 		self.refreshButton = QPushButton("Refresh")
 		self.runSimulationButton = QPushButton("Run Simulation")
 		self.updateDisplayButton = QPushButton("Update display")
+		self.cacheStageCombo = QComboBox()
+		self.cacheStageCombo.addItem("Raw detector", "raw")
+		self.cacheStageCombo.addItem("Line integral", "line_integral")
+		self.cacheFormatCombo = QComboBox()
+		self.cacheFormatCombo.addItem("NumPy (*.npy)", ".npy")
+		self.cacheFormatCombo.addItem("Text (*.txt)", ".txt")
+		self.cacheFormatCombo.addItem("CSV (*.csv)", ".csv")
+		self.cacheFormatCombo.addItem("TSV (*.tsv)", ".tsv")
+		self.exportProjectionButton = QPushButton("Export projection")
+		self.importProjectionButton = QPushButton("Import projection")
+		self.exportSourcesButton = QPushButton("Export per-source")
 		self.updateDisplayButton.setEnabled(False)
 		self.renderInfoLabel = QLabel("")
 		self.renderInfoLabel.setWordWrap(True)
@@ -513,6 +526,18 @@ class PropVirtualXRay(PropWidget):
 		actions_layout.addWidget(self.updateDisplayButton)
 		actions_layout.addWidget(self.refreshButton)
 		runTabLayout.addWidget(actionsWidget)
+		cacheWidget = QWidget()
+		cacheWidget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+		cacheLayout = QHBoxLayout(cacheWidget)
+		cacheLayout.setContentsMargins(0, 0, 0, 0)
+		cacheLayout.setSpacing(4)
+		cacheLayout.addWidget(QLabel("Cache:"))
+		cacheLayout.addWidget(self.cacheStageCombo)
+		cacheLayout.addWidget(self.cacheFormatCombo)
+		cacheLayout.addWidget(self.exportProjectionButton)
+		cacheLayout.addWidget(self.importProjectionButton)
+		cacheLayout.addWidget(self.exportSourcesButton)
+		runTabLayout.addWidget(cacheWidget)
 		self.progressBar = QProgressBar()
 		self.progressBar.setRange(0, 100)
 		self.progressBar.setValue(0)
@@ -970,6 +995,9 @@ class PropVirtualXRay(PropWidget):
 		self.refreshButton.clicked.connect(self.on_refresh_requested)
 		self.runSimulationButton.clicked.connect(self.on_run_simulation)
 		self.updateDisplayButton.clicked.connect(self.on_update_display)
+		self.exportProjectionButton.clicked.connect(self.on_export_projection_requested)
+		self.importProjectionButton.clicked.connect(self.on_import_projection_requested)
+		self.exportSourcesButton.clicked.connect(self.on_export_source_projections_requested)
 
 	@staticmethod
 	def create(m, parent=0):
@@ -1159,6 +1187,8 @@ class PropVirtualXRay(PropWidget):
 		self.volumesLabel.setText(str(len(obj.collect_xray_objects())))
 		self.renderInfoLabel.setText(obj.info())
 		self.updateDisplayButton.setEnabled(obj.last_raw_projection is not None)
+		self.exportProjectionButton.setEnabled(obj.last_raw_projection is not None or getattr(obj, "last_line_integral_projection", None) is not None)
+		self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
 		self._update_mode_visibility(obj)
 		self._update_depth_window_visibility(obj)
 		self._update_physics_visibility(obj)
@@ -1478,53 +1508,38 @@ class PropVirtualXRay(PropWidget):
 
 	@pyqtSlot()
 	def _display_image_array(self, obj, display_image):
-		"""Convert a float display image to uint8 and either create or update one workspace image object."""
-		mode = str(obj.presentation_mode).lower()
-		if mode == "raw":
-			image_u8 = normalize_projection_to_uint8(
-				display_image,
-				robust_percentile=float(obj.presentation_robust_percentile),
-				invert=False,
-			)
-		else:
-			image_u8 = normalize_projection_to_uint8(
-				display_image,
-				fixed_range=(0.0, 1.0),
-				invert=False,
-			)
-		overlay_enabled = bool(getattr(obj, "presentation_overlay_annotations", False))
-		image_u8 = np.ascontiguousarray(np.flipud(image_u8))
-		height, width = image_u8.shape[:2]
-		if image_u8.ndim == 2 and not overlay_enabled:
-			qimage = QImage(
-				image_u8.data,
-				width,
-				height,
-				image_u8.strides[0],
-				QImage.Format_Grayscale8,
-			).copy()
-		else:
-			if image_u8.ndim == 2:
-				image_u8 = np.ascontiguousarray(np.repeat(image_u8[:, :, None], 3, axis=2))
-			qimage = QImage(
-				image_u8.data,
-				width,
-				height,
-				image_u8.strides[0],
-				QImage.Format_RGB888,
-			).copy()
-		self._paint_projected_overlays(qimage, obj)
+		"""Create or update one plugin-local detector image object from the cached raw projection."""
+		if obj.last_raw_projection is None:
+			return
 		image_obj = getattr(obj, "last_projection_image", None)
-		if isinstance(image_obj, Image) and self._is_image_in_workspace(image_obj):
-			image_obj.setImage(qimage)
+		if isinstance(image_obj, DetectorImage) and self._is_image_in_workspace(image_obj):
+			image_obj.setArray(obj.last_raw_projection, source_stage="raw", auto_window=False)
+			image_obj.display_invert = bool(obj.presentation_invert)
+			image_obj.display_gamma = float(obj.presentation_gamma)
+			image_obj.display_contrast = float(obj.presentation_contrast)
+			image_obj.display_robust_percentile = float(obj.presentation_robust_percentile)
+			if obj.presentation_window_center is not None and obj.presentation_window_width is not None:
+				image_obj.window_center = float(obj.presentation_window_center)
+				image_obj.window_width = max(1e-6, float(obj.presentation_window_width))
 			image_obj.label = f"{obj.label}_projection"
+			image_obj.source_virtual_xray_label = str(obj.label)
 			AP.mainWin.dock["workspace"].refreshAll()
 			self._refresh_image_viewers(image_obj)
 			return
 
-		image_obj = Image()
-		image_obj.setImage(qimage)
+		image_obj = DetectorImage()
+		image_obj.setArray(obj.last_raw_projection, source_stage="raw", auto_window=False)
 		image_obj.label = f"{obj.label}_projection"
+		image_obj.source_virtual_xray_label = str(obj.label)
+		image_obj.display_invert = bool(obj.presentation_invert)
+		image_obj.display_gamma = float(obj.presentation_gamma)
+		image_obj.display_contrast = float(obj.presentation_contrast)
+		image_obj.display_robust_percentile = float(obj.presentation_robust_percentile)
+		if obj.presentation_window_center is not None and obj.presentation_window_width is not None:
+			image_obj.window_center = float(obj.presentation_window_center)
+			image_obj.window_width = max(1e-6, float(obj.presentation_window_width))
+		else:
+			image_obj.auto_window(robust_percentile=float(obj.presentation_robust_percentile))
 		obj.last_projection_image = image_obj
 		AP.addObject(image_obj)
 		self._refresh_image_viewers(image_obj)
@@ -1635,6 +1650,24 @@ class PropVirtualXRay(PropWidget):
 
 		AP.updateProperties()
 
+	def _selected_cache_stage(self):
+		"""Return the currently selected cache stage identifier."""
+		stage = self.cacheStageCombo.currentData()
+		return "raw" if stage is None else str(stage)
+
+	def _selected_cache_format(self):
+		"""Return the currently selected cache export file suffix."""
+		file_format = self.cacheFormatCombo.currentData()
+		return ".npy" if file_format is None else str(file_format)
+
+	def _cache_stage_label(self, stage):
+		"""Return a user-facing label for one cache stage identifier."""
+		return "line integral" if str(stage).lower() in {"line", "line_integral", "integral"} else "raw detector"
+
+	def _cache_dialog_filter(self):
+		"""Return one file-dialog filter for supported projection cache formats."""
+		return "Projection cache (*.npy *.txt *.csv *.tsv);;NumPy (*.npy);;Text (*.txt);;CSV (*.csv);;TSV (*.tsv)"
+
 	def on_run_simulation(self):
 		"""Run one X-ray projection, cache the raw result and insert the display image into the workspace."""
 		obj = self.obj_ref()
@@ -1645,8 +1678,8 @@ class PropVirtualXRay(PropWidget):
 		self.progressBar.setVisible(True)
 		self.runSimulationButton.setEnabled(False)
 
-		# Zamroź viewery GL przed processEvents — renderowanie Image przez glTexImage2D
-		# poza normalnym cyklem paintGL powoduje crash przy drugiej symulacji.
+		# Zamroź viewery GL przed processEvents, żeby uniknąć odświeżania sceny
+		# podczas blokującego przebiegu symulacji.
 		gl_viewers = self._freeze_gl_viewers()
 
 		QApplication.processEvents()  # odmaluj pasek przed startem blokującego obliczenia
@@ -1666,6 +1699,8 @@ class PropVirtualXRay(PropWidget):
 				return
 			self._display_image_array(obj, display_image)
 			self.updateDisplayButton.setEnabled(True)
+			self.exportProjectionButton.setEnabled(True)
+			self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
 			projected_annotations = getattr(getattr(obj, "last_projected_annotations", None), "items", [])
 			projected_on_detector = len([item for item in projected_annotations if item.in_bounds])
 			self.renderInfoLabel.setText(
@@ -1708,4 +1743,96 @@ class PropVirtualXRay(PropWidget):
 			for viewer in gl_viewers:
 				viewer.setUpdatesEnabled(True)
 			self.updateDisplayButton.setEnabled(obj.last_raw_projection is not None)
+			self.exportProjectionButton.setEnabled(obj.last_raw_projection is not None or getattr(obj, "last_line_integral_projection", None) is not None)
+			self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
 			AP.updateAllViews()
+
+	@pyqtSlot()
+	def on_export_projection_requested(self):
+		"""Export the currently selected cached projection stage to a user-chosen file."""
+		obj = self.obj_ref()
+		if obj is None:
+			return
+		stage = self._selected_cache_stage()
+		default_suffix = self._selected_cache_format()
+		default_path = f"{obj.label}_{stage}{default_suffix}"
+		file_path, _selected_filter = QFileDialog.getSaveFileName(
+			self,
+			f"Export {self._cache_stage_label(stage)} projection",
+			default_path,
+			self._cache_dialog_filter(),
+		)
+		if not file_path:
+			return
+		try:
+			obj.export_cached_projection(file_path, stage=stage)
+		except Exception as exc:
+			QMessageBox.critical(self, "Projection export error", str(exc))
+			return
+		self.renderInfoLabel.setText(f"{obj.info()}\nExported {self._cache_stage_label(stage)} projection to:\n{file_path}")
+
+	@pyqtSlot()
+	def on_import_projection_requested(self):
+		"""Import one cached projection file and refresh the displayed image."""
+		obj = self.obj_ref()
+		if obj is None:
+			return
+		stage = self._selected_cache_stage()
+		file_path, _selected_filter = QFileDialog.getOpenFileName(
+			self,
+			f"Import {self._cache_stage_label(stage)} projection",
+			"",
+			self._cache_dialog_filter(),
+		)
+		if not file_path:
+			return
+		gl_viewers = self._freeze_gl_viewers()
+		QApplication.setOverrideCursor(Qt.WaitCursor)
+		try:
+			try:
+				obj.import_cached_projection(file_path, stage=stage)
+				display_image = obj.apply_presentation()
+			except Exception as exc:
+				QMessageBox.critical(self, "Projection import error", str(exc))
+				return
+			if display_image is not None:
+				self._display_image_array(obj, display_image)
+			self.updateDisplayButton.setEnabled(obj.last_raw_projection is not None)
+			self.exportProjectionButton.setEnabled(obj.last_raw_projection is not None or getattr(obj, "last_line_integral_projection", None) is not None)
+			self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
+			self.renderInfoLabel.setText(f"{obj.info()}\nImported {self._cache_stage_label(stage)} projection from:\n{file_path}")
+		finally:
+			QApplication.restoreOverrideCursor()
+			for viewer in gl_viewers:
+				viewer.setUpdatesEnabled(True)
+			AP.updateAllViews()
+
+	@pyqtSlot()
+	def on_export_source_projections_requested(self):
+		"""Export cached per-source projection contributions into a chosen directory."""
+		obj = self.obj_ref()
+		if obj is None:
+			return
+		stage = self._selected_cache_stage()
+		if not getattr(obj, "last_source_projections", []):
+			QMessageBox.warning(self, "Per-source export", "No cached per-source projections are available.")
+			return
+		directory = QFileDialog.getExistingDirectory(
+			self,
+			f"Export {self._cache_stage_label(stage)} per-source projections",
+			"",
+		)
+		if not directory:
+			return
+		try:
+			exported_paths = obj.export_cached_source_projections(
+				directory,
+				stage=stage,
+				file_format=self._selected_cache_format(),
+			)
+		except Exception as exc:
+			QMessageBox.critical(self, "Per-source export error", str(exc))
+			return
+		self.renderInfoLabel.setText(
+			f"{obj.info()}\nExported {len(exported_paths)} per-source {self._cache_stage_label(stage)} projections to:\n{directory}"
+		)
