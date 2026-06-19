@@ -38,12 +38,14 @@ def test_virtual_xray_atmdl_roundtrip_with_standard_mesh_child(tmp_path):
 		virtual_xray.label = "vx-atmdl"
 		virtual_xray.projection_mode = "parallel"
 		virtual_xray.physics_source_energy_kev = 92.0
-		virtual_xray.presentation_mode = "film"
-		virtual_xray.presentation_overlay_annotations = True
-		virtual_xray.presentation_overlay_labels = True
-		virtual_xray.presentation_overlay_cross_size_px = 11
-		virtual_xray.presentation_window_center = 12.5
-		virtual_xray.presentation_window_width = 44.0
+		virtual_xray.set_detector_image_defaults({
+			"mode": "film",
+			"overlay_annotations": True,
+			"overlay_labels": True,
+			"overlay_cross_size_px": 11,
+			"window_center": 12.5,
+			"window_width": 44.0,
+		})
 
 		frame = Transform()
 		frame.label = "source-frame"
@@ -73,7 +75,7 @@ def test_virtual_xray_atmdl_roundtrip_with_standard_mesh_child(tmp_path):
 		assert "virtRTGConfig64 " in text
 		assert "geometry {" in text
 		assert "physics {" in text
-		assert "presentation {" in text
+		assert "detectorImageDefaults {" in text
 		assert "sourceNode {" in text
 
 		imported = ParserATMDL.load(str(scene_path))
@@ -85,12 +87,13 @@ def test_virtual_xray_atmdl_roundtrip_with_standard_mesh_child(tmp_path):
 		assert imported.label == "vx-atmdl"
 		assert imported.projection_mode == "parallel"
 		assert imported.physics_source_energy_kev == 92.0
-		assert imported.presentation_mode == "film"
-		assert imported.presentation_overlay_annotations is True
-		assert imported.presentation_overlay_labels is True
-		assert imported.presentation_overlay_cross_size_px == 11
-		assert imported.presentation_window_center == 12.5
-		assert imported.presentation_window_width == 44.0
+		defaults = imported.get_detector_image_defaults()
+		assert defaults["mode"] == "film"
+		assert defaults["overlay_annotations"] is True
+		assert defaults["overlay_labels"] is True
+		assert defaults["overlay_cross_size_px"] == 11
+		assert defaults["window_center"] == 12.5
+		assert defaults["window_width"] == 44.0
 		assert imported.last_raw_projection is None
 		assert imported.last_line_integral_projection is None
 		assert imported.last_source_projections == []
@@ -158,7 +161,7 @@ def test_virtual_xray_text_sections_override_stale_base64_payload(tmp_path):
 		virtual_xray.label = "vx-editable"
 		virtual_xray.projection_mode = "cone"
 		virtual_xray.physics_source_energy_kev = 70.0
-		virtual_xray.presentation_gamma = 0.7
+		virtual_xray.set_detector_image_defaults({"gamma": 0.7})
 
 		scene_path = tmp_path / "virtual_xray_editable.atmdl"
 		assert WriterATMDL.save(virtual_xray, str(scene_path)) is True
@@ -176,6 +179,6 @@ def test_virtual_xray_text_sections_override_stale_base64_payload(tmp_path):
 		assert imported.hasType("VirtualXRay")
 		assert imported.projection_mode == "parallel"
 		assert imported.physics_source_energy_kev == 123.5
-		assert imported.presentation_gamma == 1.9
+		assert imported.get_detector_image_defaults()["gamma"] == 1.9
 	finally:
 		unregister_atmdl_integration()

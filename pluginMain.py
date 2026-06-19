@@ -73,6 +73,10 @@ class VirtualRTG(PluginInterface):
 		self.menu.addAction(action)
 		action.triggered.connect(self.onAction_Import_RTG)
 
+		action = QAction("Import Projection", AP.mainWin)
+		self.menu.addAction(action)
+		action.triggered.connect(self.onAction_Import_Projection)
+
 		action = QAction("Create Demo", AP.mainWin)
 		self.menu.addAction(action)
 		action.triggered.connect(self.onAction_Create_Demo)
@@ -143,6 +147,27 @@ class VirtualRTG(PluginInterface):
 		rtg = VirtualXRay()
 		AP.addObject(rtg)
 		self._context_import_virtual_xray_scene(rtg)
+
+	def onAction_Import_Projection(self):
+		print("Akcja menu: Import Projection")
+		obj = DetectorImage()
+
+		if obj is None:
+			return
+		path, _ = QFileDialog.getOpenFileName(
+			None,
+			"Import detector array",
+			"",
+			"Detector array (*.npz *.npy *.txt *.csv *.tsv);;Projection package (*.npz);;NumPy (*.npy);;Text (*.txt);;CSV (*.csv);;TSV (*.tsv)",
+		)
+		if not path:
+			return
+		try:
+			obj.import_array(path, auto_window=False)
+		except Exception as exc:
+			QMessageBox.critical(None, "Import detector array", str(exc))
+			return
+		AP.addObject(obj)
 
 
 	def onAction_Create_Demo(self):

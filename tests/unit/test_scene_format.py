@@ -84,7 +84,7 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
 	"""Round-trip one simplified scene export into a fresh VirtualXRay object."""
 	virtual_xray = VirtualXRay()
 	virtual_xray.label = "vxray-roundtrip"
-	virtual_xray.presentation_mode = "film"
+	virtual_xray.set_detector_image_defaults({"mode": "film"})
 	virtual_xray.physics_source_energy_kev = 85.0
 
 	transform = Transform()
@@ -113,7 +113,7 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
 	imported = load_virtual_xray_scene(scene_path)
 
 	assert isinstance(imported, VirtualXRay)
-	assert imported.presentation_mode == "film"
+	assert imported.get_detector_image_defaults()["mode"] == "film"
 	assert imported.physics_source_energy_kev == 85.0
 	assert len(imported.children()) == 1
 	imported_transform = imported.children()[0]
@@ -154,7 +154,7 @@ def test_scene_import_creates_safe_hidden_placeholder_for_missing_volume_files(t
 <virtRTGScene format="virtRTG-scene" version="1">
   <nodes>
     <node id="node-0000" parent="" class="VirtualXRay" label="vx" visible="1">
-      <virtRTG encoding="json">{"schema":"virtRTG-virtual-xray","version":1,"geometry":{},"source_defaults":{},"physics":{},"presentation":{}}</virtRTG>
+      <virtRTG encoding="json">{"schema":"virtRTG-virtual-xray","version":2,"geometry":{},"source_defaults":{},"physics":{},"detector_image_defaults":{}}</virtRTG>
     </node>
     <node id="node-0001" parent="node-0000" class="Volumetric" label="missing-ct" visible="1">
       <virtRTGSource encoding="json">{"schema":"virtRTG-source-config","version":1,"source_type":"volumetric","enabled":true,"material_response_config":{"enabled":false},"source_links":{"kind":"dicom_series","files":["Z:/does/not/exist/0001.dcm"]}}</virtRTGSource>

@@ -9,14 +9,8 @@ from pathlib import Path
 import OpenGL.GL as gl
 import numpy as np
 
-from dpVision import Mesh, Object, Volumetric
+from dpVision import Mesh, Motion, Object, Volumetric
 from dpVision.marchingCubes import mc_estimate_threshold, mc_gradient
-
-from .xray.xrayPresentation import (
-	RawPresentationModel,
-	FilmLikePresentationModel,
-	DigitalRadiographyPresentationModel
-)
 
 from .xray.xraySource import (
 	MeshXRaySource,
@@ -36,6 +30,7 @@ from .xray.xrayProjection import (
 )
 from .xray.xrayAnnotationOverlay import (
 	XRayAnnotationProjectionContext,
+	XRayOverlayProjectionSet,
 	build_overlay_projection_set,
 	overlay_projection_set_from_payload,
 	overlay_projection_set_to_payload,
@@ -110,51 +105,91 @@ class VirtualXRay(Object):
 		},
 	}
 
-	PRESENTATION_PRESETS = {
+	DETECTOR_IMAGE_PRESETS = {
 		"default": {
-			"presentation_mode": "digital",
-			"presentation_invert": False,
-			"presentation_gamma": 0.7,
-			"presentation_contrast": 1.2,
-			"presentation_robust_percentile": 99.5,
-			"presentation_window_center": None,
-			"presentation_window_width": None,
+			"mode": "digital",
+			"invert": False,
+			"gamma": 0.7,
+			"contrast": 1.2,
+			"input_transform": "linear",
+			"local_enhancement": "off",
+			"clahe_clip_limit": 2.0,
+			"clahe_tile_grid_size": 8,
+			"robust_low_percentile": 0.5,
+			"robust_percentile": 99.5,
+			"window_center": None,
+			"window_width": None,
+			"overlay_annotations": False,
+			"overlay_labels": False,
+			"overlay_cross_size_px": 6,
 		},
 		"balanced": {
-			"presentation_mode": "digital",
-			"presentation_invert": False,
-			"presentation_gamma": 0.85,
-			"presentation_contrast": 1.10,
-			"presentation_robust_percentile": 99.2,
-			"presentation_window_center": None,
-			"presentation_window_width": None,
+			"mode": "digital",
+			"invert": False,
+			"gamma": 0.85,
+			"contrast": 1.10,
+			"input_transform": "linear",
+			"local_enhancement": "off",
+			"clahe_clip_limit": 2.0,
+			"clahe_tile_grid_size": 8,
+			"robust_low_percentile": 0.5,
+			"robust_percentile": 99.2,
+			"window_center": None,
+			"window_width": None,
+			"overlay_annotations": False,
+			"overlay_labels": False,
+			"overlay_cross_size_px": 6,
 		},
 		"bone_soft": {
-			"presentation_mode": "digital",
-			"presentation_invert": False,
-			"presentation_gamma": 1.35,
-			"presentation_contrast": 1.18,
-			"presentation_robust_percentile": 98.8,
-			"presentation_window_center": None,
-			"presentation_window_width": None,
+			"mode": "digital",
+			"invert": False,
+			"gamma": 1.35,
+			"contrast": 1.18,
+			"input_transform": "log1p",
+			"local_enhancement": "off",
+			"clahe_clip_limit": 2.0,
+			"clahe_tile_grid_size": 8,
+			"robust_low_percentile": 0.5,
+			"robust_percentile": 98.8,
+			"window_center": None,
+			"window_width": None,
+			"overlay_annotations": False,
+			"overlay_labels": False,
+			"overlay_cross_size_px": 6,
 		},
 		"bone_contrast": {
-			"presentation_mode": "digital",
-			"presentation_invert": False,
-			"presentation_gamma": 1.55,
-			"presentation_contrast": 1.40,
-			"presentation_robust_percentile": 98.4,
-			"presentation_window_center": None,
-			"presentation_window_width": None,
+			"mode": "digital",
+			"invert": False,
+			"gamma": 1.55,
+			"contrast": 1.40,
+			"input_transform": "log1p",
+			"local_enhancement": "clahe",
+			"clahe_clip_limit": 2.5,
+			"clahe_tile_grid_size": 8,
+			"robust_low_percentile": 0.5,
+			"robust_percentile": 98.4,
+			"window_center": None,
+			"window_width": None,
+			"overlay_annotations": False,
+			"overlay_labels": False,
+			"overlay_cross_size_px": 6,
 		},
 		"film_soft": {
-			"presentation_mode": "film",
-			"presentation_invert": False,
-			"presentation_gamma": 1.60,
-			"presentation_contrast": 1.10,
-			"presentation_robust_percentile": 99.0,
-			"presentation_window_center": None,
-			"presentation_window_width": None,
+			"mode": "film",
+			"invert": False,
+			"gamma": 1.60,
+			"contrast": 1.10,
+			"input_transform": "log1p",
+			"local_enhancement": "off",
+			"clahe_clip_limit": 2.0,
+			"clahe_tile_grid_size": 8,
+			"robust_low_percentile": 0.5,
+			"robust_percentile": 99.0,
+			"window_center": None,
+			"window_width": None,
+			"overlay_annotations": False,
+			"overlay_labels": False,
+			"overlay_cross_size_px": 6,
 		},
 	}
 
@@ -172,6 +207,7 @@ class VirtualXRay(Object):
 		self.source_position_ref = np.array([0.0, 0.0, -220.0], dtype=np.float32)
 		self.ray_direction_ref = np.array([0.0, 0.0, 1.0], dtype=np.float32)
 		self.projection_mode = "cone"
+		self.motion_frame_mode = "active"
 		self.step_mm = 1.0
 		self.depth_window_mode = "off"
 		self.depth_window_mm = [0.0, 0.0]
@@ -215,16 +251,7 @@ class VirtualXRay(Object):
 		self.physics_material_window_mode = "hard"
 		self.physics_material_window_softness = 150.0
 
-		self.presentation_mode = "digital"
-		self.presentation_invert = False
-		self.presentation_gamma = 0.7
-		self.presentation_contrast = 1.2
-		self.presentation_robust_percentile = 99.5
-		self.presentation_window_center = None
-		self.presentation_window_width = None
-		self.presentation_overlay_annotations = False
-		self.presentation_overlay_labels = False
-		self.presentation_overlay_cross_size_px = 6
+		self.detector_image_defaults = self.default_detector_image_defaults()
 
 		self.detector_fill_color = (0.18, 0.55, 0.62)
 		self.detector_edge_color = (0.42, 0.90, 0.95)
@@ -271,6 +298,8 @@ class VirtualXRay(Object):
 			self.depth_window_origin_ref = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 		if not hasattr(self, "depth_window_axis_ref"):
 			self.depth_window_axis_ref = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+		if not hasattr(self, "motion_frame_mode"):
+			self.motion_frame_mode = "active"
 
 	def _ensure_physics_defaults(self):
 		"""Backfill newer physics attributes for older serialized objects."""
@@ -291,12 +320,13 @@ class VirtualXRay(Object):
 		"""Backfill runtime annotation-projection attributes for older serialized objects."""
 		if not hasattr(self, "last_projected_annotations"):
 			self.last_projected_annotations = None
-		if not hasattr(self, "presentation_overlay_annotations"):
-			self.presentation_overlay_annotations = False
-		if not hasattr(self, "presentation_overlay_labels"):
-			self.presentation_overlay_labels = False
-		if not hasattr(self, "presentation_overlay_cross_size_px"):
-			self.presentation_overlay_cross_size_px = 6
+
+	def _ensure_detector_image_defaults(self):
+		"""Backfill detector-image presentation defaults for older serialized objects."""
+		if not hasattr(self, "detector_image_defaults"):
+			self.detector_image_defaults = self.default_detector_image_defaults()
+			return
+		self.detector_image_defaults = self.sanitize_detector_image_defaults(self.detector_image_defaults)
 
 	def _ensure_projection_cache_defaults(self):
 		"""Backfill runtime projection-cache attributes for older serialized objects."""
@@ -309,9 +339,51 @@ class VirtualXRay(Object):
 
 	def child_transform_relative_to_self(self, child):
 		"""Return one descendant transform expressed in the local frame of this X-ray object."""
-		self_global = self.reference_transform()
-		child_global = np.asarray(child.getGlobalTransformation(), dtype=np.float32)
-		return np.linalg.inv(self_global) @ child_global
+		return self.child_transform_relative_to_self_for_frame(child, motion_frame_index=None)
+
+	def child_transform_relative_to_self_for_frame(self, child, motion_frame_index=None):
+		"""Return one descendant transform expressed in the local frame of this X-ray object.
+
+		This path-aware assembly handles `Motion` ancestors explicitly so the
+		projection pipeline can either use the currently active animation key or
+		build alternate source groups for selected frame indices.
+		"""
+		transform_relative = np.eye(4, dtype=np.float32)
+		node = child
+		while node is not None and node is not self:
+			transform_relative = self._local_xray_transform_for_node(
+				node,
+				motion_frame_index=motion_frame_index,
+			) @ transform_relative
+			node = node.parent
+		return transform_relative
+
+	def _local_xray_transform_for_node(self, node, motion_frame_index=None):
+		"""Return one node-local transform used during X-ray scene assembly."""
+		if isinstance(node, Motion):
+			frame_index = node.currentKey() if motion_frame_index is None else motion_frame_index
+			return self._motion_frame_transform(node, frame_index=frame_index)
+		matrix = getattr(node, "matrix", None)
+		if matrix is None:
+			return np.eye(4, dtype=np.float32)
+		matrix = np.asarray(matrix, dtype=np.float32)
+		if matrix.shape != (4, 4):
+			return np.eye(4, dtype=np.float32)
+		return matrix
+
+	def _motion_frame_transform(self, motion, frame_index=0):
+		"""Return the selected `Motion` frame transform as a homogeneous matrix."""
+		if not isinstance(motion, Motion) or motion.size() <= 0:
+			return np.eye(4, dtype=np.float32)
+		frame = motion.frame(frame_index)
+		frame_transform = getattr(frame, "transform", None)
+		matrix = getattr(frame_transform, "matrix", None)
+		if matrix is None:
+			return np.eye(4, dtype=np.float32)
+		matrix = np.asarray(matrix, dtype=np.float32)
+		if matrix.shape != (4, 4):
+			return np.eye(4, dtype=np.float32)
+		return matrix
 
 	def _iter_descendants(self, node=None):
 		"""Yield descendants recursively while treating nested `VirtualXRay` nodes as separate sub-scenes."""
@@ -342,13 +414,40 @@ class VirtualXRay(Object):
 		candidates = self.collect_volumetrics() + self.collect_meshes()
 		return [obj for obj in candidates if bool(getattr(obj, "xray_source_enabled", True))]
 
-	def scene_sources(self):
-		"""Build X-ray sample sources from descendant volumetrics and meshes."""
+	def collect_motions(self):
+		"""Return descendant `Motion` nodes participating in this X-ray scene."""
+		return [node for node in self._iter_descendants() if isinstance(node, Motion)]
+
+	def primary_motion(self):
+		"""Return the one supported animated subtree root or `None` when absent."""
+		motions = self.collect_motions()
+		if not motions:
+			return None
+		if len(motions) > 1:
+			raise ValueError("VirtualXRay currently supports frame grouping for only one Motion object.")
+		return motions[0]
+
+	def motion_frame_indices(self):
+		"""Return available frame indices for the supported descendant `Motion`."""
+		motion = self.primary_motion()
+		if motion is None:
+			return []
+		return list(range(max(0, int(motion.size()))))
+
+	def effective_motion_frame_mode(self):
+		"""Return the normalized motion-frame expansion mode."""
+		mode = str(getattr(self, "motion_frame_mode", "active")).strip().lower()
+		if mode not in {"active", "all"}:
+			mode = "active"
+		return mode
+
+	def _build_scene_sources_for_frame(self, motion_frame_index=None, source_label_suffix=""):
+		"""Build X-ray sample sources for one selected animation frame."""
 		scalar_preprocessor = self.build_scalar_preprocessor()
 		sources = [
 			VolumetricXRaySource(
 				volumetric=vol,
-				global_transform=self.child_transform_relative_to_self(vol),
+				global_transform=self.child_transform_relative_to_self_for_frame(vol, motion_frame_index=motion_frame_index),
 				interpolation=(
 					self.source_interpolation
 					if str(getattr(vol, "xray_interpolation_override", "default")).lower() == "default"
@@ -372,7 +471,7 @@ class VirtualXRay(Object):
 		sources.extend(
 			MeshXRaySource(
 				mesh=mesh,
-				global_transform=self.child_transform_relative_to_self(mesh),
+				global_transform=self.child_transform_relative_to_self_for_frame(mesh, motion_frame_index=motion_frame_index),
 				scalar_value=float(getattr(mesh, "xray_mesh_scalar_value", self.mesh_source_scalar_value)),
 				backend=str(getattr(mesh, "xray_mesh_backend", "analytic_bvh")).lower(),
 				mode=str(getattr(mesh, "xray_mesh_mode", self.mesh_source_mode)).lower(),
@@ -385,11 +484,86 @@ class VirtualXRay(Object):
 			for mesh in self.collect_meshes()
 			if bool(getattr(mesh, "xray_source_enabled", True))
 		)
+		label_suffix = str(source_label_suffix)
+		if label_suffix:
+			for source in sources:
+				base_object = getattr(source, "mesh", None) or getattr(source, "volumetric", None)
+				base_label = getattr(base_object, "label", type(source).__name__)
+				source.projection_label = f"{base_label}{label_suffix}"
 		return sources
 
-	def build_scene(self):
+	def scene_sources(self, motion_frame_index=None):
+		"""Build X-ray sample sources from descendant volumetrics and meshes.
+
+		When one `Motion` is present and no explicit frame is requested, all frames
+		are expanded into separate source instances so one projection includes the
+		full animated subtree.
+		"""
+		if motion_frame_index is not None:
+			return self._build_scene_sources_for_frame(
+				motion_frame_index=motion_frame_index,
+				source_label_suffix=f" [frame {int(motion_frame_index):03d}]",
+			)
+
+		frame_indices = self.motion_frame_indices()
+		if not frame_indices:
+			return self._build_scene_sources_for_frame(motion_frame_index=None)
+		if self.effective_motion_frame_mode() != "all":
+			return self._build_scene_sources_for_frame(
+				motion_frame_index=None,
+				source_label_suffix="",
+			)
+
+		sources = []
+		for frame_index in frame_indices:
+			sources.extend(self._build_scene_sources_for_frame(
+				motion_frame_index=frame_index,
+				source_label_suffix=f" [frame {int(frame_index):03d}]",
+			))
+		return sources
+
+	def scene_source_groups(self):
+		"""Return per-frame source groups for the supported descendant `Motion`.
+
+		Each group represents the same source subtree sampled at one animation
+		frame. When no `Motion` exists, one default group is returned.
+		"""
+		frame_indices = self.motion_frame_indices()
+		if not frame_indices:
+			return [{
+				"group_index": 0,
+				"frame_index": None,
+				"label": "current",
+				"sources": self._build_scene_sources_for_frame(motion_frame_index=None),
+			}]
+		return [
+			{
+				"group_index": int(frame_index),
+				"frame_index": int(frame_index),
+				"label": f"frame_{int(frame_index):03d}",
+				"sources": self._build_scene_sources_for_frame(
+					motion_frame_index=frame_index,
+					source_label_suffix=f" [frame {int(frame_index):03d}]",
+				),
+			}
+			for frame_index in frame_indices
+		]
+
+	def build_scene(self, motion_frame_index=None):
 		"""Return an `XRayScene` assembled from the current descendant X-ray sources."""
-		return XRayScene.from_sample_sources(self.scene_sources())
+		return XRayScene.from_sample_sources(self.scene_sources(motion_frame_index=motion_frame_index))
+
+	def build_scene_groups(self):
+		"""Return per-frame `XRayScene` groups for the supported descendant `Motion`."""
+		return [
+			{
+				"group_index": int(group["group_index"]),
+				"frame_index": group["frame_index"],
+				"label": str(group["label"]),
+				"scene": XRayScene.from_sample_sources(group["sources"]),
+			}
+			for group in self.scene_source_groups()
+		]
 
 	def quality_profile(self):
 		"""Return the selected quality profile instance."""
@@ -468,31 +642,52 @@ class VirtualXRay(Object):
 			material_window_softness=self.physics_material_window_softness,
 		)
 
-	def build_presentation_model(self):
-		"""Build the selected presentation model for display-ready output."""
-		mode = str(self.presentation_mode).lower()
-		if mode == "raw":
-			return RawPresentationModel()
-		if mode == "film":
-			return FilmLikePresentationModel(
-				robust_percentile=self.presentation_robust_percentile,
-				gamma=self.presentation_gamma,
-				contrast=self.presentation_contrast,
-				invert=self.presentation_invert,
-			)
-		return DigitalRadiographyPresentationModel(
-			window_center=self.presentation_window_center,
-			window_width=self.presentation_window_width,
-			robust_percentile=self.presentation_robust_percentile,
-			invert=self.presentation_invert,
-			gamma=self.presentation_gamma,
-			contrast=self.presentation_contrast,
-		)
+	@classmethod
+	def detector_image_preset_names(cls):
+		"""Return detector-image preset names exposed by the scene object."""
+		return list(cls.DETECTOR_IMAGE_PRESETS.keys())
 
 	@classmethod
-	def presentation_preset_names(cls):
-		"""Return presentation preset names exposed by the scene object."""
-		return list(cls.PRESENTATION_PRESETS.keys())
+	def default_detector_image_defaults(cls):
+		"""Return the default detector-image presentation mapping."""
+		return cls.sanitize_detector_image_defaults(cls.DETECTOR_IMAGE_PRESETS["default"])
+
+	@classmethod
+	def sanitize_detector_image_defaults(cls, defaults):
+		"""Normalize one detector-image presentation mapping."""
+		base = dict(cls.DETECTOR_IMAGE_PRESETS["default"])
+		if isinstance(defaults, dict):
+			base.update(defaults)
+		robust_low_percentile = min(99.999, max(0.0, float(base.get("robust_low_percentile", 0.5))))
+		return {
+			"mode": str(base.get("mode", "digital")).lower(),
+			"invert": bool(base.get("invert", False)),
+			"gamma": max(0.05, float(base.get("gamma", 0.7))),
+			"contrast": max(0.05, float(base.get("contrast", 1.2))),
+			"input_transform": str(base.get("input_transform", "linear")).lower(),
+			"local_enhancement": str(base.get("local_enhancement", "off")).lower(),
+			"clahe_clip_limit": max(0.01, float(base.get("clahe_clip_limit", 2.0))),
+			"clahe_tile_grid_size": max(1, int(base.get("clahe_tile_grid_size", 8))),
+			"robust_low_percentile": robust_low_percentile,
+			"robust_percentile": min(
+				100.0,
+				max(robust_low_percentile + 1e-6, float(base.get("robust_percentile", 99.5))),
+			),
+			"window_center": base.get("window_center", None),
+			"window_width": base.get("window_width", None),
+			"overlay_annotations": bool(base.get("overlay_annotations", False)),
+			"overlay_labels": bool(base.get("overlay_labels", False)),
+			"overlay_cross_size_px": max(1, int(base.get("overlay_cross_size_px", 6))),
+		}
+
+	def get_detector_image_defaults(self):
+		"""Return a normalized copy of detector-image defaults."""
+		self._ensure_detector_image_defaults()
+		return dict(self.detector_image_defaults)
+
+	def set_detector_image_defaults(self, defaults):
+		"""Store normalized detector-image defaults."""
+		self.detector_image_defaults = self.sanitize_detector_image_defaults(defaults)
 
 	@classmethod
 	def geometry_preset_names(cls):
@@ -526,13 +721,12 @@ class VirtualXRay(Object):
 			return dict(cls.DEFAULT_GEOMETRY_PRESETS)
 		return presets
 
-	def apply_presentation_preset(self, preset_name):
-		"""Apply one predefined presentation preset to the current object state."""
-		preset = self.PRESENTATION_PRESETS.get(str(preset_name).lower())
+	def apply_detector_image_preset(self, preset_name):
+		"""Apply one predefined detector-image preset to the current object state."""
+		preset = self.DETECTOR_IMAGE_PRESETS.get(str(preset_name).lower())
 		if preset is None:
-			raise KeyError(f"Unknown presentation preset: {preset_name}")
-		for attr_name, attr_value in preset.items():
-			setattr(self, attr_name, attr_value)
+			raise KeyError(f"Unknown detector image preset: {preset_name}")
+		self.set_detector_image_defaults(preset)
 
 	def apply_geometry_preset(self, preset_name):
 		"""Apply one predefined geometry preset to the current X-ray setup."""
@@ -556,7 +750,7 @@ class VirtualXRay(Object):
 		return XRayProjectionConfig(
 			geometry=self.build_geometry(),
 			physics_model=self.build_physics_model(),
-			presentation_model=self.build_presentation_model(),
+			presentation_model=None,
 			reference_transform=np.eye(4, dtype=np.float32),
 			quality_profile=self.quality_profile(),
 		)
@@ -566,13 +760,44 @@ class VirtualXRay(Object):
 		self._ensure_annotation_projection_defaults()
 		config = self.build_projection_config()
 		geometry = config.effective_geometry()
-		context = XRayAnnotationProjectionContext(
-			geometry=geometry,
-			reference_transform=self.reference_transform(),
-		)
-		self.last_projected_annotations = build_overlay_projection_set(
-			self.collect_projectable_annotations(),
-			context=context,
+		reference_transform = self.reference_transform()
+		annotations = self.collect_projectable_annotations()
+		frame_indices = self.motion_frame_indices()
+		if not frame_indices or self.effective_motion_frame_mode() != "all":
+			context = XRayAnnotationProjectionContext(
+				geometry=geometry,
+				reference_transform=reference_transform,
+				object_transform_resolver=lambda scene_object: self.child_transform_relative_to_self_for_frame(
+					scene_object,
+					motion_frame_index=None,
+				),
+			)
+			self.last_projected_annotations = build_overlay_projection_set(
+				annotations,
+				context=context,
+			)
+			return self.last_projected_annotations
+
+		all_items = []
+		detector_shape_hw = (int(geometry.detector_shape_hw[0]), int(geometry.detector_shape_hw[1]))
+		for frame_index in frame_indices:
+			context = XRayAnnotationProjectionContext(
+				geometry=geometry,
+				reference_transform=reference_transform,
+				object_transform_resolver=lambda scene_object, _frame_index=frame_index: self.child_transform_relative_to_self_for_frame(
+					scene_object,
+					motion_frame_index=_frame_index,
+				),
+				overlay_label_suffix=f" [frame {int(frame_index):03d}]",
+			)
+			projection_set = build_overlay_projection_set(
+				annotations,
+				context=context,
+			)
+			all_items.extend(list(projection_set.items))
+		self.last_projected_annotations = XRayOverlayProjectionSet(
+			detector_shape_hw=detector_shape_hw,
+			items=all_items,
 		)
 		return self.last_projected_annotations
 
@@ -735,7 +960,10 @@ class VirtualXRay(Object):
 		if suffix in {".txt", ".csv", ".tsv"}:
 			if suffix == ".tsv":
 				delimiter = "\t"
-			np.savetxt(path, array, fmt="%.9g", delimiter=delimiter)
+			save_kwargs = {"fmt": "%.9g"}
+			if delimiter is not None:
+				save_kwargs["delimiter"] = delimiter
+			np.savetxt(path, array, **save_kwargs)
 			return path
 		raise ValueError("Supported projection export formats are: .npy, .npz, .txt, .csv, .tsv.")
 
@@ -774,43 +1002,68 @@ class VirtualXRay(Object):
 		"""Save one cached detector-space projection array to disk."""
 		path = Path(path)
 		array = self._resolve_projection_cache(stage)
+		self._ensure_detector_image_defaults()
 		if path.suffix.lower() != ".npz":
 			return self._save_projection_array(array, path)
-		metadata = {
-			"schema": "virtRTG-projection-export",
-			"version": 1,
-			"stage": str(stage),
-			"source_virtual_xray_label": str(self.label),
-			"projected_annotations": overlay_projection_set_to_payload(
-				getattr(self, "last_projected_annotations", None)
-			),
-			"presentation_defaults": {
-				"mode": str(getattr(self, "presentation_mode", "digital")),
-				"invert": bool(getattr(self, "presentation_invert", False)),
-				"gamma": float(getattr(self, "presentation_gamma", 1.0)),
-				"contrast": float(getattr(self, "presentation_contrast", 1.0)),
-				"robust_percentile": float(getattr(self, "presentation_robust_percentile", 99.5)),
-				"window_center": getattr(self, "presentation_window_center", None),
-				"window_width": getattr(self, "presentation_window_width", None),
-				"overlay_annotations": bool(getattr(self, "presentation_overlay_annotations", False)),
-				"overlay_labels": bool(getattr(self, "presentation_overlay_labels", False)),
-				"overlay_cross_size_px": int(getattr(self, "presentation_overlay_cross_size_px", 6)),
-			},
-			"geometry_snapshot": {
-				"projection_mode": str(getattr(self, "projection_mode", "cone")),
-				"detector_shape_hw": [int(self.detector_shape_hw[0]), int(self.detector_shape_hw[1])],
-			},
-		}
-		np.savez_compressed(
-			path,
-			image=np.asarray(array, dtype=np.float32),
-			metadata_json=np.asarray(json.dumps(metadata, ensure_ascii=False), dtype=np.str_),
-		)
+		from .detectorImage import DetectorImage
+
+		detector_image = DetectorImage()
+		detector_image.sync_from_virtual_xray(self, auto_window=False)
+		if str(stage).strip().lower() in {"line", "line_integral", "integral"} and "composited_line_integral" in detector_image.package_images:
+			detector_image.set_active_layer("composited_line_integral", auto_window=False)
+		detector_image.export_array(path)
 		return path
 
 	def import_cached_projection(self, path, stage="raw"):
 		"""Load one cached detector-space projection array from disk into this object."""
 		self._ensure_projection_cache_defaults()
+		path = Path(path)
+		if path.suffix.lower() == ".npz":
+			with np.load(path, allow_pickle=False) as archive:
+				if "metadata_json" in archive:
+					metadata_raw = archive["metadata_json"]
+					metadata = json.loads(str(metadata_raw.tolist() if hasattr(metadata_raw, "tolist") else metadata_raw))
+					if isinstance(metadata, dict) and str(metadata.get("schema", "")).strip() == "virtRTG-detector-package":
+						from .detectorImage import DetectorImage
+
+						detector_image = DetectorImage()
+						detector_image.import_array(path, auto_window=False)
+						active_layer = detector_image.active_layer_info()
+						active_stage = str(stage).strip().lower() if active_layer is None else str(active_layer.get("stage", stage)).strip().lower()
+						self.last_raw_projection = None
+						self.last_line_integral_projection = None
+						self.last_source_projections = []
+						self.last_projected_annotations = detector_image.overlay_projection_set
+						for layer in detector_image.package_layers:
+							layer_array = detector_image.package_images.get(layer["key"], None)
+							if layer_array is None:
+								continue
+							if layer["role"] == "composited":
+								if layer["stage"] == "raw":
+									self.last_raw_projection = np.asarray(layer_array, dtype=np.float32)
+								elif layer["stage"] == "line_integral":
+									self.last_line_integral_projection = np.asarray(layer_array, dtype=np.float32)
+							elif layer["role"] == "per_source":
+								source_index = int(layer.get("source_index", 0) or 0)
+								existing = next((item for item in self.last_source_projections if int(item.source_index) == source_index), None)
+								if existing is None:
+									existing = XRaySourceProjection(
+										source_index=source_index,
+										label=str(layer.get("source_label", layer["label"])),
+										source_type=str(layer.get("source_type", "unknown")),
+										line_integral_image=np.zeros_like(layer_array, dtype=np.float32),
+										detector_image=np.zeros_like(layer_array, dtype=np.float32),
+									)
+									self.last_source_projections.append(existing)
+								if layer["stage"] == "raw":
+									existing.detector_image = np.asarray(layer_array, dtype=np.float32)
+								elif layer["stage"] == "line_integral":
+									existing.line_integral_image = np.asarray(layer_array, dtype=np.float32)
+						if self.last_raw_projection is None and self.last_line_integral_projection is not None:
+							self.last_raw_projection = self._line_integral_to_detector_image(self.last_line_integral_projection)
+						if active_stage in {"line", "line_integral", "integral"}:
+							return np.asarray(self.last_line_integral_projection, dtype=np.float32)
+						return np.asarray(self.last_raw_projection, dtype=np.float32)
 		array, metadata = self._load_projection_array(path)
 		import_stage = str(stage).strip().lower()
 		if isinstance(metadata, dict):
@@ -927,15 +1180,6 @@ class VirtualXRay(Object):
 				detector_image=source_raw_array,
 			))
 		self.last_projection_image = None
-
-	def apply_presentation(self):
-		"""Apply the current presentation model to `last_raw_projection` without re-projecting.
-
-		Returns the display-ready float32 image, or ``None`` if no projection has been cached yet.
-		"""
-		if self.last_raw_projection is None:
-			return None
-		return self.build_presentation_model().apply(self.last_raw_projection)
 
 	def detector_corners_ref(self):
 		"""Return detector corners in local reference coordinates for gizmo drawing and bounding box computation."""

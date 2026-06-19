@@ -26,6 +26,9 @@ from .xray.xrayPresentation import (
 class DetectorImage(Object):
 	"""Represent one flat detector-space float image stored in the scene tree."""
 
+	PACKAGE_SCHEMA = "virtRTG-detector-package"
+	PACKAGE_VERSION = 1
+
 	def __init__(self, parent=None, array=None, source_stage="raw"):
 		"""Initialize one hidden-in-3D detector image object."""
 		super().__init__(parent)
@@ -37,6 +40,11 @@ class DetectorImage(Object):
 		self.presentation_invert = False
 		self.presentation_gamma = 1.0
 		self.presentation_contrast = 1.0
+		self.presentation_input_transform = "linear"
+		self.presentation_local_enhancement = "off"
+		self.presentation_clahe_clip_limit = 2.0
+		self.presentation_clahe_tile_grid_size = 8
+		self.presentation_robust_low_percentile = 0.5
 		self.presentation_robust_percentile = 99.5
 		self.presentation_window_center = None
 		self.presentation_window_width = None
@@ -46,6 +54,10 @@ class DetectorImage(Object):
 		self.overlay_projection_set = None
 		self.transfer_points_pct = [(0.0, 0.0), (100.0, 100.0)]
 		self.display_only_window_range = False
+		self.package_images = {}
+		self.package_layers = []
+		self.package_metadata = {}
+		self.active_layer_key = None
 		if array is not None:
 			self.setArray(array)
 
@@ -152,7 +164,7 @@ class DetectorImage(Object):
 			"mean": float(np.mean(finite_values)),
 		}
 
-	def auto_window_range(self, robust_percentile=None):
+	def auto_window_range(self, robust_percentile=None, robust_low_percentile=None):
 		"""Return one automatic display range based on finite values."""
 		if self.raw_array is None:
 			return 0.0, 1.0
@@ -160,12 +172,19 @@ class DetectorImage(Object):
 		finite_values = finite_values[np.isfinite(finite_values)]
 		if finite_values.size == 0:
 			return 0.0, 1.0
-		percentile = float(
+		high_percentile = float(
 			self.presentation_robust_percentile if robust_percentile is None else robust_percentile
 		)
-		percentile = min(100.0, max(50.0, percentile))
-		vmin = float(np.min(finite_values))
-		vmax = float(np.percentile(finite_values, percentile))
+		low_percentile = float(
+			self.presentation_robust_low_percentile
+			if robust_low_percentile is None else robust_low_percentile
+		)
+		high_percentile = min(100.0, max(50.0, high_percentile))
+		low_percentile = min(high_percentile - 1e-6, max(0.0, low_percentile))
+		vmin = float(np.percentile(finite_values, low_percentile))
+		vmax = float(np.percentile(finite_values, high_percentile))
+		if vmax <= vmin:
+			vmin = float(np.min(finite_values))
 		if vmax <= vmin:
 			vmax = float(np.max(finite_values))
 		if vmax <= vmin:
@@ -182,9 +201,12 @@ class DetectorImage(Object):
 		self.presentation_window_center = (vmin + vmax) / 2.0
 		self.presentation_window_width = vmax - vmin
 
-	def auto_window(self, robust_percentile=None):
+	def auto_window(self, robust_percentile=None, robust_low_percentile=None):
 		"""Set the presentation window using the robust automatic range."""
-		vmin, vmax = self.auto_window_range(robust_percentile=robust_percentile)
+		vmin, vmax = self.auto_window_range(
+			robust_percentile=robust_percentile,
+			robust_low_percentile=robust_low_percentile,
+		)
 		self.presentation_window_center = (vmin + vmax) / 2.0
 		self.presentation_window_width = max(vmax - vmin, 1e-6)
 
@@ -199,6 +221,97 @@ class DetectorImage(Object):
 		if auto_window:
 			self.auto_window()
 
+	def _normalize_package_layer(self, layer):
+		"""Normalize one package-layer mapping used for multi-image detector bundles."""
+		layer = {} if layer is None else dict(layer)
+		key = str(layer.get("key", "")).strip()
+		if key == "":
+			raise ValueError("Package layer is missing a non-empty key.")
+		return {
+			"key": key,
+			"label": str(layer.get("label", key)),
+			"stage": str(layer.get("stage", "raw")),
+			"role": str(layer.get("role", "derived")),
+			"source_index": None if layer.get("source_index", None) is None else int(layer.get("source_index")),
+			"source_label": str(layer.get("source_label", "")),
+			"source_type": str(layer.get("source_type", "")),
+		}
+
+	def clear_projection_package(self):
+		"""Forget all optional multi-image package data and keep only the active array."""
+		self.package_images = {}
+		self.package_layers = []
+		self.package_metadata = {}
+		self.active_layer_key = None
+
+	def set_projection_package(self, package_images, package_layers, metadata=None, active_layer_key=None, auto_window=False):
+		"""Replace the optional projection package stored by this detector image."""
+		normalized_images = {}
+		for key, array in dict(package_images or {}).items():
+			array = np.asarray(array, dtype=np.float32)
+			if array.ndim != 2:
+				raise ValueError("Projection package images must be 2D float32 arrays.")
+			normalized_images[str(key)] = np.array(array, dtype=np.float32, copy=True)
+
+		normalized_layers = []
+		for layer in list(package_layers or []):
+			normalized_layer = self._normalize_package_layer(layer)
+			if normalized_layer["key"] not in normalized_images:
+				continue
+			normalized_layers.append(normalized_layer)
+
+		if not normalized_layers and normalized_images:
+			first_key = next(iter(normalized_images.keys()))
+			normalized_layers.append(self._normalize_package_layer({
+				"key": first_key,
+				"label": first_key,
+				"stage": self.source_stage,
+				"role": "derived",
+			}))
+
+		self.package_images = normalized_images
+		self.package_layers = normalized_layers
+		self.package_metadata = {} if metadata is None else dict(metadata)
+		self.active_layer_key = None if active_layer_key is None else str(active_layer_key)
+		if self.active_layer_key not in self.package_images and normalized_layers:
+			self.active_layer_key = normalized_layers[0]["key"]
+		if self.active_layer_key in self.package_images:
+			self.set_active_layer(self.active_layer_key, auto_window=auto_window)
+
+	def package_layer_choices(self):
+		"""Return a compact list of `(key, label)` pairs for UI selectors."""
+		return [(layer["key"], layer["label"]) for layer in self.package_layers]
+
+	def active_layer_info(self):
+		"""Return metadata for the currently active package layer, or `None`."""
+		active_key = None if self.active_layer_key is None else str(self.active_layer_key)
+		for layer in self.package_layers:
+			if layer["key"] == active_key:
+				return dict(layer)
+		return None
+
+	def set_active_layer(self, layer_key, auto_window=False):
+		"""Switch the displayed array to one package layer if it exists."""
+		layer_key = str(layer_key)
+		array = self.package_images.get(layer_key, None)
+		if array is None:
+			raise KeyError(f"Unknown detector package layer: {layer_key}")
+		layer_info = next((layer for layer in self.package_layers if layer["key"] == layer_key), None)
+		self.active_layer_key = layer_key
+		self.setArray(
+			array,
+			source_stage=(self.source_stage if layer_info is None else layer_info["stage"]),
+			auto_window=auto_window,
+		)
+
+	def _sync_active_layer_into_package(self):
+		"""Mirror the current active array back into the in-memory package image map."""
+		if self.raw_array is None or self.active_layer_key is None:
+			return
+		if self.active_layer_key not in self.package_images:
+			return
+		self.package_images[self.active_layer_key] = np.array(self.raw_array, dtype=np.float32, copy=True)
+
 	def build_presentation_model(self):
 		"""Build the selected presentation model for display-ready output."""
 		mode = str(self.presentation_mode).lower()
@@ -206,18 +319,28 @@ class DetectorImage(Object):
 			return RawPresentationModel()
 		if mode == "film":
 			return FilmLikePresentationModel(
+				robust_low_percentile=self.presentation_robust_low_percentile,
 				robust_percentile=self.presentation_robust_percentile,
 				gamma=self.presentation_gamma,
 				contrast=self.presentation_contrast,
 				invert=self.presentation_invert,
+				input_transform=self.presentation_input_transform,
+				local_enhancement=self.presentation_local_enhancement,
+				clahe_clip_limit=self.presentation_clahe_clip_limit,
+				clahe_tile_grid_size=self.presentation_clahe_tile_grid_size,
 			)
 		return DigitalRadiographyPresentationModel(
 			window_center=self.presentation_window_center,
 			window_width=self.presentation_window_width,
+			robust_low_percentile=self.presentation_robust_low_percentile,
 			robust_percentile=self.presentation_robust_percentile,
 			invert=self.presentation_invert,
 			gamma=self.presentation_gamma,
 			contrast=self.presentation_contrast,
+			input_transform=self.presentation_input_transform,
+			local_enhancement=self.presentation_local_enhancement,
+			clahe_clip_limit=self.presentation_clahe_clip_limit,
+			clahe_tile_grid_size=self.presentation_clahe_tile_grid_size,
 		)
 
 	def effective_window(self):
@@ -262,10 +385,15 @@ class DetectorImage(Object):
 			return self._apply_raw_tone_controls(self._normalize_raw_window(image))
 		if mode == "film":
 			return FilmLikePresentationModel(
+				robust_low_percentile=self.presentation_robust_low_percentile,
 				robust_percentile=self.presentation_robust_percentile,
 				gamma=self.presentation_gamma,
 				contrast=self.presentation_contrast,
 				invert=self.presentation_invert,
+				input_transform=self.presentation_input_transform,
+				local_enhancement=self.presentation_local_enhancement,
+				clahe_clip_limit=self.presentation_clahe_clip_limit,
+				clahe_tile_grid_size=self.presentation_clahe_tile_grid_size,
 			).apply(image)
 		return self.build_presentation_model().apply(image)
 
@@ -320,45 +448,255 @@ class DetectorImage(Object):
 		"""Store detector-space overlay primitives projected from the source scene."""
 		self.overlay_projection_set = overlay_projection_set
 
+	def apply_presentation_defaults(self, defaults):
+		"""Apply one normalized presentation-default mapping to this detector image."""
+		defaults = {} if defaults is None else dict(defaults)
+		self.presentation_mode = str(defaults.get("mode", self.presentation_mode))
+		self.presentation_invert = bool(defaults.get("invert", self.presentation_invert))
+		self.presentation_gamma = max(0.05, float(defaults.get("gamma", self.presentation_gamma)))
+		self.presentation_contrast = max(0.05, float(defaults.get("contrast", self.presentation_contrast)))
+		self.presentation_input_transform = str(
+			defaults.get("input_transform", self.presentation_input_transform)
+		).lower()
+		self.presentation_local_enhancement = str(
+			defaults.get("local_enhancement", self.presentation_local_enhancement)
+		).lower()
+		self.presentation_clahe_clip_limit = max(
+			0.01,
+			float(defaults.get("clahe_clip_limit", self.presentation_clahe_clip_limit)),
+		)
+		self.presentation_clahe_tile_grid_size = max(
+			1,
+			int(defaults.get("clahe_tile_grid_size", self.presentation_clahe_tile_grid_size)),
+		)
+		self.presentation_robust_low_percentile = min(
+			99.999,
+			max(0.0, float(defaults.get("robust_low_percentile", self.presentation_robust_low_percentile))),
+		)
+		self.presentation_robust_percentile = min(
+			100.0,
+			max(
+				self.presentation_robust_low_percentile + 1e-6,
+				float(defaults.get("robust_percentile", self.presentation_robust_percentile)),
+			),
+		)
+		self.presentation_window_center = defaults.get("window_center", self.presentation_window_center)
+		self.presentation_window_width = defaults.get("window_width", self.presentation_window_width)
+		self.presentation_overlay_annotations = bool(
+			defaults.get("overlay_annotations", self.presentation_overlay_annotations)
+		)
+		self.presentation_overlay_labels = bool(
+			defaults.get("overlay_labels", self.presentation_overlay_labels)
+		)
+		self.presentation_overlay_cross_size_px = max(
+			1,
+			int(defaults.get("overlay_cross_size_px", self.presentation_overlay_cross_size_px)),
+		)
+
+	def _npz_array_ref_payload(self, archive_key, array):
+		"""Return one JSON-ready reference to an array stored as a separate NPZ entry."""
+		array = np.asarray(array, dtype=np.float32)
+		return {
+			"storage": "npz_entry",
+			"archive_key": str(archive_key),
+			"dtype": "float32",
+			"shape": [int(array.shape[0]), int(array.shape[1])],
+		}
+
+	def _build_projection_package_npz_payload(self):
+		"""Return `(metadata, arrays)` for the externalized NPZ detector package format."""
+		self._sync_active_layer_into_package()
+		if self.raw_array is None:
+			raise ValueError("No detector array is available to export.")
+		package_images = dict(self.package_images)
+		package_layers = list(self.package_layers)
+		if not package_images:
+			fallback_key = "composited_raw"
+			package_images[fallback_key] = np.array(self.raw_array, dtype=np.float32, copy=True)
+			package_layers = [self._normalize_package_layer({
+				"key": fallback_key,
+				"label": "Composited raw",
+				"stage": self.source_stage,
+				"role": "composited",
+			})]
+			if self.active_layer_key is None:
+				self.active_layer_key = fallback_key
+		active_layer_key = self.active_layer_key if self.active_layer_key in package_images else package_layers[0]["key"]
+		arrays = {}
+		image_refs = {}
+		for layer_index, layer in enumerate(package_layers):
+			layer_key = layer["key"]
+			array = package_images.get(layer_key, None)
+			if array is None:
+				continue
+			archive_key = f"image_{layer_index:03d}_{layer_key}"
+			arrays[archive_key] = np.asarray(array, dtype=np.float32)
+			image_refs[layer_key] = self._npz_array_ref_payload(archive_key, array)
+		metadata = {
+			"schema": self.PACKAGE_SCHEMA,
+			"version": self.PACKAGE_VERSION,
+			"active_layer_key": str(active_layer_key),
+			"image_object": {
+				"source_stage": str(self.source_stage),
+				"source_virtual_xray_label": str(self.source_virtual_xray_label),
+				"presentation": self._package_presentation_payload(),
+			},
+			"simulation_context": dict(self.package_metadata.get("simulation_context", {})),
+			"annotations": {
+				"projected_annotations": overlay_projection_set_to_payload(self.overlay_projection_set),
+			},
+			"layers": [dict(layer) for layer in package_layers],
+			"images": image_refs,
+		}
+		return metadata, arrays
+
+	def _package_presentation_payload(self):
+		"""Return the current presentation state as a JSON-ready mapping."""
+		return {
+			"mode": str(self.presentation_mode),
+			"invert": bool(self.presentation_invert),
+			"gamma": float(self.presentation_gamma),
+			"contrast": float(self.presentation_contrast),
+			"input_transform": str(self.presentation_input_transform),
+			"local_enhancement": str(self.presentation_local_enhancement),
+			"clahe_clip_limit": float(self.presentation_clahe_clip_limit),
+			"clahe_tile_grid_size": int(self.presentation_clahe_tile_grid_size),
+			"robust_low_percentile": float(self.presentation_robust_low_percentile),
+			"robust_percentile": float(self.presentation_robust_percentile),
+			"window_center": self.presentation_window_center,
+			"window_width": self.presentation_window_width,
+			"overlay_annotations": bool(self.presentation_overlay_annotations),
+			"overlay_labels": bool(self.presentation_overlay_labels),
+			"overlay_cross_size_px": int(self.presentation_overlay_cross_size_px),
+			"display_only_window_range": bool(self.display_only_window_range),
+			"transfer_points_pct": [
+				[float(x_value), float(y_value)]
+				for x_value, y_value in self.transfer_points_pct
+			],
+		}
+
+	def _apply_projection_package_payload(self, payload, auto_window=False, archive=None):
+		"""Restore this object from one complete detector package payload."""
+		image_object = dict(payload.get("image_object", {}))
+		self.source_stage = str(image_object.get("source_stage", self.source_stage))
+		self.source_virtual_xray_label = str(
+			image_object.get("source_virtual_xray_label", self.source_virtual_xray_label)
+		)
+		presentation = dict(image_object.get("presentation", {}))
+		self.apply_presentation_defaults(presentation)
+		self.display_only_window_range = bool(
+			presentation.get("display_only_window_range", self.display_only_window_range)
+		)
+		self.set_transfer_points_pct(presentation.get("transfer_points_pct", self.transfer_points_pct))
+		self.overlay_projection_set = overlay_projection_set_from_payload(
+			dict(payload.get("annotations", {})).get("projected_annotations", None)
+		)
+		package_images = {}
+		for key, array_payload in dict(payload.get("images", {})).items():
+			storage = str(array_payload.get("storage", "")).strip().lower()
+			if storage != "npz_entry":
+				raise ValueError("Detector package images must be stored as separate NPZ entries.")
+			if archive is None:
+				raise ValueError("Detector package references NPZ entries, but no archive was provided.")
+			archive_key = str(array_payload.get("archive_key", "")).strip()
+			if archive_key == "":
+				raise ValueError("Detector package image reference is missing archive_key.")
+			if archive_key not in archive:
+				raise ValueError(f"Detector package is missing array entry: {archive_key}")
+			package_images[key] = np.asarray(archive[archive_key], dtype=np.float32)
+		self.set_projection_package(
+			package_images=package_images,
+			package_layers=list(payload.get("layers", [])),
+			metadata={"simulation_context": dict(payload.get("simulation_context", {}))},
+			active_layer_key=payload.get("active_layer_key", None),
+			auto_window=auto_window,
+		)
+
 	def sync_from_virtual_xray(self, virtual_xray, auto_window=False):
 		"""Copy raw data, presentation settings, and overlays from one `VirtualXRay` object."""
 		self.source_virtual_xray_label = str(getattr(virtual_xray, "label", ""))
 		self.label = f"{self.source_virtual_xray_label}_projection"
-		self.presentation_mode = str(getattr(virtual_xray, "presentation_mode", self.presentation_mode))
-		self.presentation_invert = bool(getattr(virtual_xray, "presentation_invert", self.presentation_invert))
-		self.presentation_gamma = max(0.05, float(getattr(virtual_xray, "presentation_gamma", self.presentation_gamma)))
-		self.presentation_contrast = max(0.05, float(getattr(virtual_xray, "presentation_contrast", self.presentation_contrast)))
-		self.presentation_robust_percentile = min(
-			100.0,
-			max(50.0, float(getattr(virtual_xray, "presentation_robust_percentile", self.presentation_robust_percentile))),
-		)
-		self.presentation_window_center = getattr(virtual_xray, "presentation_window_center", None)
-		self.presentation_window_width = getattr(virtual_xray, "presentation_window_width", None)
-		self.presentation_overlay_annotations = bool(
-			getattr(virtual_xray, "presentation_overlay_annotations", self.presentation_overlay_annotations)
-		)
-		self.presentation_overlay_labels = bool(
-			getattr(virtual_xray, "presentation_overlay_labels", self.presentation_overlay_labels)
-		)
-		self.presentation_overlay_cross_size_px = max(
-			1,
-			int(getattr(virtual_xray, "presentation_overlay_cross_size_px", self.presentation_overlay_cross_size_px)),
-		)
+		defaults_getter = getattr(virtual_xray, "get_detector_image_defaults", None)
+		defaults = defaults_getter() if callable(defaults_getter) else getattr(virtual_xray, "detector_image_defaults", None)
+		self.apply_presentation_defaults(defaults)
 		self.set_projected_annotations(getattr(virtual_xray, "last_projected_annotations", None))
+		package_images = {}
+		package_layers = []
 		if getattr(virtual_xray, "last_raw_projection", None) is not None:
-			should_auto_window = bool(
-				auto_window
-				and (
-					self.presentation_window_center is None
-					or self.presentation_window_width is None
-					or float(self.presentation_window_width) <= 0.0
-				)
-			)
-			self.setArray(
+			package_images["composited_raw"] = np.asarray(
 				getattr(virtual_xray, "last_raw_projection"),
-				source_stage="raw",
-				auto_window=should_auto_window,
+				dtype=np.float32,
 			)
+			package_layers.append({
+				"key": "composited_raw",
+				"label": "Composited raw",
+				"stage": "raw",
+				"role": "composited",
+			})
+		if getattr(virtual_xray, "last_line_integral_projection", None) is not None:
+			package_images["composited_line_integral"] = np.asarray(
+				getattr(virtual_xray, "last_line_integral_projection"),
+				dtype=np.float32,
+			)
+			package_layers.append({
+				"key": "composited_line_integral",
+				"label": "Composited line integral",
+				"stage": "line_integral",
+				"role": "composited",
+			})
+		for source_projection in list(getattr(virtual_xray, "last_source_projections", [])):
+			source_prefix = f"source_{int(source_projection.source_index):03d}"
+			source_label = str(source_projection.label)
+			package_images[f"{source_prefix}_raw"] = np.asarray(source_projection.detector_image, dtype=np.float32)
+			package_layers.append({
+				"key": f"{source_prefix}_raw",
+				"label": f"{source_label} raw",
+				"stage": "raw",
+				"role": "per_source",
+				"source_index": int(source_projection.source_index),
+				"source_label": source_label,
+				"source_type": str(source_projection.source_type),
+			})
+			package_images[f"{source_prefix}_line_integral"] = np.asarray(
+				source_projection.line_integral_image,
+				dtype=np.float32,
+			)
+			package_layers.append({
+				"key": f"{source_prefix}_line_integral",
+				"label": f"{source_label} line integral",
+				"stage": "line_integral",
+				"role": "per_source",
+				"source_index": int(source_projection.source_index),
+				"source_label": source_label,
+				"source_type": str(source_projection.source_type),
+			})
+		should_auto_window = bool(
+			auto_window
+			and (
+				self.presentation_window_center is None
+				or self.presentation_window_width is None
+				or float(self.presentation_window_width) <= 0.0
+			)
+		)
+		self.set_projection_package(
+			package_images=package_images,
+			package_layers=package_layers,
+			metadata={
+				"simulation_context": {
+					"source_virtual_xray_label": str(getattr(virtual_xray, "label", "")),
+					"detector_image_defaults": {} if defaults is None else dict(defaults),
+					"geometry_snapshot": {
+						"projection_mode": str(getattr(virtual_xray, "projection_mode", "cone")),
+						"detector_shape_hw": [
+							int(getattr(virtual_xray, "detector_shape_hw", [0, 0])[0]),
+							int(getattr(virtual_xray, "detector_shape_hw", [0, 0])[1]),
+						],
+					},
+				},
+			},
+			active_layer_key="composited_raw" if "composited_raw" in package_images else (package_layers[0]["key"] if package_layers else None),
+			auto_window=should_auto_window,
+		)
 
 	def _paint_projected_overlays(self, qimage):
 		"""Paint generic projected overlay primitives on the final display image."""
@@ -455,13 +793,14 @@ class DetectorImage(Object):
 		display = np.ascontiguousarray(np.flipud(self.get_display_array()))
 		image_u8 = np.round(display * 255.0).astype(np.uint8, copy=False)
 		height, width = image_u8.shape
-		qimage = QImage(
+		grayscale_image = QImage(
 			image_u8.data,
 			width,
 			height,
 			image_u8.strides[0],
 			QImage.Format_Grayscale8,
 		).copy()
+		qimage = grayscale_image.convertToFormat(QImage.Format_ARGB32)
 		self._paint_projected_overlays(qimage)
 		return qimage
 
@@ -481,15 +820,18 @@ class DetectorImage(Object):
 			array = np.load(path)
 		elif suffix == ".npz":
 			with np.load(path, allow_pickle=False) as archive:
+				if "metadata_json" in archive:
+					metadata_raw = archive["metadata_json"]
+					metadata = json.loads(str(metadata_raw.tolist() if hasattr(metadata_raw, "tolist") else metadata_raw))
+					if isinstance(metadata, dict) and str(metadata.get("schema", "")).strip() == self.PACKAGE_SCHEMA:
+						self._apply_projection_package_payload(metadata, auto_window=auto_window, archive=archive)
+						return path
 				if "image" in archive:
 					array = archive["image"]
 				elif len(archive.files) == 1:
 					array = archive[archive.files[0]]
 				else:
 					raise ValueError("DetectorImage NPZ must contain an 'image' array.")
-				if "metadata_json" in archive:
-					metadata_raw = archive["metadata_json"]
-					metadata = json.loads(str(metadata_raw.tolist() if hasattr(metadata_raw, "tolist") else metadata_raw))
 		elif suffix in {".txt", ".csv", ".tsv"}:
 			delimiter = "," if suffix == ".csv" else None
 			if suffix == ".tsv":
@@ -500,39 +842,8 @@ class DetectorImage(Object):
 		array = np.asarray(array, dtype=np.float32)
 		if array.ndim != 2:
 			raise ValueError("Imported detector arrays must be 2D.")
+		self.clear_projection_package()
 		self.setArray(array, auto_window=auto_window)
-		if not isinstance(metadata, dict):
-			return path
-		self.source_stage = str(metadata.get("source_stage", self.source_stage))
-		self.source_virtual_xray_label = str(metadata.get("source_virtual_xray_label", self.source_virtual_xray_label))
-		presentation = dict(metadata.get("presentation", {}))
-		self.presentation_mode = str(presentation.get("mode", self.presentation_mode))
-		self.presentation_invert = bool(presentation.get("invert", self.presentation_invert))
-		self.presentation_gamma = max(0.05, float(presentation.get("gamma", self.presentation_gamma)))
-		self.presentation_contrast = max(0.05, float(presentation.get("contrast", self.presentation_contrast)))
-		self.presentation_robust_percentile = min(
-			100.0,
-			max(50.0, float(presentation.get("robust_percentile", self.presentation_robust_percentile))),
-		)
-		self.presentation_window_center = presentation.get("window_center", self.presentation_window_center)
-		self.presentation_window_width = presentation.get("window_width", self.presentation_window_width)
-		self.presentation_overlay_annotations = bool(
-			presentation.get("overlay_annotations", self.presentation_overlay_annotations)
-		)
-		self.presentation_overlay_labels = bool(
-			presentation.get("overlay_labels", self.presentation_overlay_labels)
-		)
-		self.presentation_overlay_cross_size_px = max(
-			1,
-			int(presentation.get("overlay_cross_size_px", self.presentation_overlay_cross_size_px)),
-		)
-		self.display_only_window_range = bool(
-			presentation.get("display_only_window_range", self.display_only_window_range)
-		)
-		self.set_transfer_points_pct(presentation.get("transfer_points_pct", self.transfer_points_pct))
-		self.overlay_projection_set = overlay_projection_set_from_payload(
-			metadata.get("projected_annotations", None)
-		)
 		return path
 
 	def export_array(self, path):
@@ -545,40 +856,21 @@ class DetectorImage(Object):
 			np.save(path, self.raw_array)
 			return path
 		if suffix == ".npz":
-			metadata = {
-				"schema": "virtRTG-detector-image-export",
-				"version": 1,
-				"source_stage": str(self.source_stage),
-				"source_virtual_xray_label": str(self.source_virtual_xray_label),
-				"presentation": {
-					"mode": str(self.presentation_mode),
-					"invert": bool(self.presentation_invert),
-					"gamma": float(self.presentation_gamma),
-					"contrast": float(self.presentation_contrast),
-					"robust_percentile": float(self.presentation_robust_percentile),
-					"window_center": self.presentation_window_center,
-					"window_width": self.presentation_window_width,
-					"overlay_annotations": bool(self.presentation_overlay_annotations),
-					"overlay_labels": bool(self.presentation_overlay_labels),
-					"overlay_cross_size_px": int(self.presentation_overlay_cross_size_px),
-					"display_only_window_range": bool(self.display_only_window_range),
-					"transfer_points_pct": [
-						[float(x_value), float(y_value)]
-						for x_value, y_value in self.transfer_points_pct
-					],
-				},
-				"projected_annotations": overlay_projection_set_to_payload(self.overlay_projection_set),
+			metadata, arrays = self._build_projection_package_npz_payload()
+			archive_payload = {
+				"metadata_json": np.asarray(json.dumps(metadata, ensure_ascii=False), dtype=np.str_),
 			}
-			np.savez_compressed(
-				path,
-				image=np.asarray(self.raw_array, dtype=np.float32),
-				metadata_json=np.asarray(json.dumps(metadata, ensure_ascii=False), dtype=np.str_),
-			)
+			for archive_key, array in arrays.items():
+				archive_payload[archive_key] = np.asarray(array, dtype=np.float32)
+			np.savez_compressed(path, **archive_payload)
 			return path
 		delimiter = "," if suffix == ".csv" else None
 		if suffix == ".tsv":
 			delimiter = "\t"
 		if suffix in {".txt", ".csv", ".tsv"}:
-			np.savetxt(path, self.raw_array, fmt="%.9g", delimiter=delimiter)
+			save_kwargs = {"fmt": "%.9g"}
+			if delimiter is not None:
+				save_kwargs["delimiter"] = delimiter
+			np.savetxt(path, self.raw_array, **save_kwargs)
 			return path
 		raise ValueError("Supported detector array formats are: .npy, .npz, .txt, .csv, .tsv.")

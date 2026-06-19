@@ -63,15 +63,24 @@ class XRayAnnotationProjectionContext:
 
 	geometry: object
 	reference_transform: np.ndarray
+	object_transform_resolver: object | None = None
+	overlay_label_suffix: str = ""
 
 	def object_point_to_reference(self, scene_object, point_xyz):
 		"""Return one local object-space point expressed in the VirtualXRay reference frame."""
 		local_point = np.asarray(point_xyz, dtype=np.float32)
 		local_point_h = np.append(local_point, 1.0).astype(np.float32)
+		if callable(self.object_transform_resolver):
+			object_transform = np.asarray(self.object_transform_resolver(scene_object), dtype=np.float32)
+			return (object_transform @ local_point_h)[:3].astype(np.float32)
 		global_transform = np.asarray(scene_object.getGlobalTransformation(), dtype=np.float32)
 		global_point_h = global_transform @ local_point_h
 		reference_transform_inv = np.linalg.inv(np.asarray(self.reference_transform, dtype=np.float32))
 		return (reference_transform_inv @ global_point_h)[:3].astype(np.float32)
+
+	def format_overlay_label(self, base_label):
+		"""Return one overlay label optionally suffixed with the current frame marker."""
+		return f"{base_label}{self.overlay_label_suffix}" if self.overlay_label_suffix else str(base_label)
 
 	def project_reference_point(self, point_ref):
 		"""Project one reference-space point onto the detector plane."""
@@ -173,7 +182,7 @@ class AnnotationPointProjector(BaseXRayAnnotationProjector):
 		return [
 			XRayOverlayCross(
 				kind="AnnotationPoint",
-				label=str(scene_object.label),
+				label=context.format_overlay_label(scene_object.label),
 				pixel_uv=projection["detector_pixel_uv"],
 				style=context.default_style_for(scene_object),
 				visible=bool(projection["visible"]),
@@ -209,7 +218,7 @@ class AnnotationPathProjector(BaseXRayAnnotationProjector):
 		return [
 			XRayOverlayPolyline(
 				kind="AnnotationPath",
-				label=str(scene_object.label),
+				label=context.format_overlay_label(scene_object.label),
 				pixel_uvs=projected_points,
 				style=context.default_style_for(
 					scene_object,

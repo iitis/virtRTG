@@ -407,18 +407,7 @@ def _virtual_xray_payload(virtual_xray):
 			"material_window_mode": str(virtual_xray.physics_material_window_mode),
 			"material_window_softness": float(virtual_xray.physics_material_window_softness),
 		},
-		"presentation": {
-			"mode": str(virtual_xray.presentation_mode),
-			"invert": bool(virtual_xray.presentation_invert),
-			"gamma": float(virtual_xray.presentation_gamma),
-			"contrast": float(virtual_xray.presentation_contrast),
-			"robust_percentile": float(virtual_xray.presentation_robust_percentile),
-			"window_center": virtual_xray.presentation_window_center,
-			"window_width": virtual_xray.presentation_window_width,
-			"overlay_annotations": bool(getattr(virtual_xray, "presentation_overlay_annotations", False)),
-			"overlay_labels": bool(getattr(virtual_xray, "presentation_overlay_labels", False)),
-			"overlay_cross_size_px": int(getattr(virtual_xray, "presentation_overlay_cross_size_px", 6)),
-		},
+		"detector_image_defaults": virtual_xray.get_detector_image_defaults(),
 	}
 
 
@@ -646,17 +635,9 @@ def _apply_virtual_xray_payload(virtual_xray, payload):
 	virtual_xray.physics_material_window_mode = str(physics.get("material_window_mode", virtual_xray.physics_material_window_mode))
 	virtual_xray.physics_material_window_softness = float(physics.get("material_window_softness", virtual_xray.physics_material_window_softness))
 
-	presentation = payload.get("presentation", {})
-	virtual_xray.presentation_mode = str(presentation.get("mode", virtual_xray.presentation_mode))
-	virtual_xray.presentation_invert = bool(presentation.get("invert", virtual_xray.presentation_invert))
-	virtual_xray.presentation_gamma = float(presentation.get("gamma", virtual_xray.presentation_gamma))
-	virtual_xray.presentation_contrast = float(presentation.get("contrast", virtual_xray.presentation_contrast))
-	virtual_xray.presentation_robust_percentile = float(presentation.get("robust_percentile", virtual_xray.presentation_robust_percentile))
-	virtual_xray.presentation_window_center = presentation.get("window_center", virtual_xray.presentation_window_center)
-	virtual_xray.presentation_window_width = presentation.get("window_width", virtual_xray.presentation_window_width)
-	virtual_xray.presentation_overlay_annotations = bool(presentation.get("overlay_annotations", getattr(virtual_xray, "presentation_overlay_annotations", False)))
-	virtual_xray.presentation_overlay_labels = bool(presentation.get("overlay_labels", getattr(virtual_xray, "presentation_overlay_labels", False)))
-	virtual_xray.presentation_overlay_cross_size_px = int(presentation.get("overlay_cross_size_px", getattr(virtual_xray, "presentation_overlay_cross_size_px", 6)))
+	virtual_xray.set_detector_image_defaults(
+		payload.get("detector_image_defaults", virtual_xray.get_detector_image_defaults())
+	)
 
 
 def _apply_detector_image_payload(detector_image, payload):
@@ -669,30 +650,7 @@ def _apply_detector_image_payload(detector_image, payload):
 	if raw_array is not None:
 		detector_image.setArray(raw_array, source_stage=detector_image.source_stage, auto_window=False)
 	presentation = payload.get("presentation", {})
-	detector_image.presentation_mode = str(presentation.get("mode", detector_image.presentation_mode))
-	detector_image.presentation_invert = bool(presentation.get("invert", detector_image.presentation_invert))
-	detector_image.presentation_gamma = float(presentation.get("gamma", detector_image.presentation_gamma))
-	detector_image.presentation_contrast = float(presentation.get("contrast", detector_image.presentation_contrast))
-	detector_image.presentation_robust_percentile = float(
-		presentation.get("robust_percentile", detector_image.presentation_robust_percentile)
-	)
-	detector_image.presentation_window_center = presentation.get(
-		"window_center",
-		detector_image.presentation_window_center,
-	)
-	detector_image.presentation_window_width = presentation.get(
-		"window_width",
-		detector_image.presentation_window_width,
-	)
-	detector_image.presentation_overlay_annotations = bool(
-		presentation.get("overlay_annotations", detector_image.presentation_overlay_annotations)
-	)
-	detector_image.presentation_overlay_labels = bool(
-		presentation.get("overlay_labels", detector_image.presentation_overlay_labels)
-	)
-	detector_image.presentation_overlay_cross_size_px = int(
-		presentation.get("overlay_cross_size_px", detector_image.presentation_overlay_cross_size_px)
-	)
+	detector_image.apply_presentation_defaults(presentation)
 	detector_image.display_only_window_range = bool(
 		presentation.get("display_only_window_range", detector_image.display_only_window_range)
 	)
@@ -784,17 +742,18 @@ def _write_virtual_xray_text_sections(writer_cls, stream, virtual_xray, indent):
 	stream.write(f"{ind2}materialWindowSoftness {float(virtual_xray.physics_material_window_softness):.16g}\n")
 	stream.write(f"{ind1}}}\n")
 
-	stream.write(f"{ind1}presentation {{\n")
-	stream.write(f'{ind2}mode "{virtual_xray.presentation_mode}"\n')
-	stream.write(f"{ind2}invert {_atmdl_bool_text(virtual_xray.presentation_invert)}\n")
-	stream.write(f"{ind2}gamma {float(virtual_xray.presentation_gamma):.16g}\n")
-	stream.write(f"{ind2}contrast {float(virtual_xray.presentation_contrast):.16g}\n")
-	stream.write(f"{ind2}robustPercentile {float(virtual_xray.presentation_robust_percentile):.16g}\n")
-	stream.write(f"{ind2}windowCenter {_atmdl_optional_scalar_text(virtual_xray.presentation_window_center)}\n")
-	stream.write(f"{ind2}windowWidth {_atmdl_optional_scalar_text(virtual_xray.presentation_window_width)}\n")
-	stream.write(f"{ind2}overlayAnnotations {_atmdl_bool_text(getattr(virtual_xray, 'presentation_overlay_annotations', False))}\n")
-	stream.write(f"{ind2}overlayLabels {_atmdl_bool_text(getattr(virtual_xray, 'presentation_overlay_labels', False))}\n")
-	stream.write(f"{ind2}overlayCrossSizePx {int(getattr(virtual_xray, 'presentation_overlay_cross_size_px', 6))}\n")
+	defaults = virtual_xray.get_detector_image_defaults()
+	stream.write(f"{ind1}detectorImageDefaults {{\n")
+	stream.write(f'{ind2}mode "{defaults["mode"]}"\n')
+	stream.write(f"{ind2}invert {_atmdl_bool_text(defaults['invert'])}\n")
+	stream.write(f"{ind2}gamma {float(defaults['gamma']):.16g}\n")
+	stream.write(f"{ind2}contrast {float(defaults['contrast']):.16g}\n")
+	stream.write(f"{ind2}robustPercentile {float(defaults['robust_percentile']):.16g}\n")
+	stream.write(f"{ind2}windowCenter {_atmdl_optional_scalar_text(defaults['window_center'])}\n")
+	stream.write(f"{ind2}windowWidth {_atmdl_optional_scalar_text(defaults['window_width'])}\n")
+	stream.write(f"{ind2}overlayAnnotations {_atmdl_bool_text(defaults['overlay_annotations'])}\n")
+	stream.write(f"{ind2}overlayLabels {_atmdl_bool_text(defaults['overlay_labels'])}\n")
+	stream.write(f"{ind2}overlayCrossSizePx {int(defaults['overlay_cross_size_px'])}\n")
 	stream.write(f"{ind1}}}\n")
 
 
@@ -1020,19 +979,20 @@ def _apply_virtual_xray_text_sections(virtual_xray, sections):
 			virtual_xray.physics_material_window_mode = str(physics["materialWindowMode"])
 		virtual_xray.physics_material_window_softness = float(physics.get("materialWindowSoftness", virtual_xray.physics_material_window_softness))
 
-	presentation = sections.get("presentation", {})
-	if presentation:
-		if presentation.get("mode") is not None:
-			virtual_xray.presentation_mode = str(presentation["mode"])
-		virtual_xray.presentation_invert = _atmdl_read_bool(presentation.get("invert"), virtual_xray.presentation_invert)
-		virtual_xray.presentation_gamma = float(presentation.get("gamma", virtual_xray.presentation_gamma))
-		virtual_xray.presentation_contrast = float(presentation.get("contrast", virtual_xray.presentation_contrast))
-		virtual_xray.presentation_robust_percentile = float(presentation.get("robustPercentile", virtual_xray.presentation_robust_percentile))
-		virtual_xray.presentation_window_center = _atmdl_read_optional_float(presentation.get("windowCenter"), virtual_xray.presentation_window_center)
-		virtual_xray.presentation_window_width = _atmdl_read_optional_float(presentation.get("windowWidth"), virtual_xray.presentation_window_width)
-		virtual_xray.presentation_overlay_annotations = _atmdl_read_bool(presentation.get("overlayAnnotations"), getattr(virtual_xray, "presentation_overlay_annotations", False))
-		virtual_xray.presentation_overlay_labels = _atmdl_read_bool(presentation.get("overlayLabels"), getattr(virtual_xray, "presentation_overlay_labels", False))
-		virtual_xray.presentation_overlay_cross_size_px = int(float(presentation.get("overlayCrossSizePx", getattr(virtual_xray, "presentation_overlay_cross_size_px", 6))))
+	detector_image_defaults = sections.get("detectorImageDefaults", {})
+	if detector_image_defaults:
+		virtual_xray.set_detector_image_defaults({
+			"mode": detector_image_defaults.get("mode", virtual_xray.get_detector_image_defaults().get("mode")),
+			"invert": _atmdl_read_bool(detector_image_defaults.get("invert"), False),
+			"gamma": float(detector_image_defaults.get("gamma", virtual_xray.get_detector_image_defaults().get("gamma", 0.7))),
+			"contrast": float(detector_image_defaults.get("contrast", virtual_xray.get_detector_image_defaults().get("contrast", 1.2))),
+			"robust_percentile": float(detector_image_defaults.get("robustPercentile", virtual_xray.get_detector_image_defaults().get("robust_percentile", 99.5))),
+			"window_center": _atmdl_read_optional_float(detector_image_defaults.get("windowCenter"), None),
+			"window_width": _atmdl_read_optional_float(detector_image_defaults.get("windowWidth"), None),
+			"overlay_annotations": _atmdl_read_bool(detector_image_defaults.get("overlayAnnotations"), False),
+			"overlay_labels": _atmdl_read_bool(detector_image_defaults.get("overlayLabels"), False),
+			"overlay_cross_size_px": int(float(detector_image_defaults.get("overlayCrossSizePx", virtual_xray.get_detector_image_defaults().get("overlay_cross_size_px", 6)))),
+		})
 
 	for source_section in sections.get("sourceNodes", []):
 		path_text = source_section.get("childIndexPath", None)
@@ -1203,7 +1163,7 @@ def _parse_virtual_xray_atmdl(parser, stream, token):
 			tekst = parser.parseType_string(stream)
 			if tekst:
 				opis[slowo] = tekst
-		elif slowo in {"geometry", "sourceDefaults", "physics", "presentation"}:
+		elif slowo in {"geometry", "sourceDefaults", "physics", "detectorImageDefaults"}:
 			parsed = _parse_section_mapping(parser, stream)
 			if parsed is None:
 				return None

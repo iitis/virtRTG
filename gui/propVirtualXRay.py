@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from time import perf_counter
 import logging
+
+from dpVision.gui.flowLayout import FlowLayout
 _log = logging.getLogger(__name__)
 
 import weakref
@@ -424,83 +426,28 @@ class PropVirtualXRay(PropWidget):
 		self.tabs.addTab(physTab, "Physics")
 
 		# ── Presentation tab ───────────────────────────────────────────
-		presentationTab = QWidget(self)
-		self._presentationTab = presentationTab
-		presentationTabLayout = QVBoxLayout(presentationTab)
-		presentationTabLayout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-
-		presentationGroup = QGroupBox("Presentation")
-		self._set_compact_group(presentationGroup)
-		presentation_layout = QFormLayout(presentationGroup)
-		self._configure_form_layout(presentation_layout)
-		self.presentationPresetWidget = QWidget()
-		self._set_compact_field(self.presentationPresetWidget)
-		presentation_preset_layout = QHBoxLayout(self.presentationPresetWidget)
-		presentation_preset_layout.setContentsMargins(0, 0, 0, 0)
-		presentation_preset_layout.setSpacing(4)
-		self.presentationPresetCombo = QComboBox()
-		self.presentationPresetCombo.addItems(VirtualXRay.presentation_preset_names())
-		self._set_compact_field(self.presentationPresetCombo)
-		self.applyPresentationPresetButton = QPushButton("Apply")
-		self.applyPresentationPresetButton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-		presentation_preset_layout.addWidget(self.presentationPresetCombo)
-		presentation_preset_layout.addWidget(self.applyPresentationPresetButton)
-		self.presentationModeCombo = QComboBox()
-		self.presentationModeCombo.addItems(["digital", "film", "raw"])
-		self._set_compact_field(self.presentationModeCombo)
-		self.presentationInvertCheck = QCheckBox("Invert")
-		self.presentationGammaSpin = QDoubleSpinBox()
-		self.presentationGammaSpin.setRange(0.05, 10.0)
-		self.presentationGammaSpin.setDecimals(3)
-		self.presentationGammaSpin.setSingleStep(0.05)
-		self._set_compact_field(self.presentationGammaSpin)
-		self.presentationContrastSpin = QDoubleSpinBox()
-		self.presentationContrastSpin.setRange(0.05, 10.0)
-		self.presentationContrastSpin.setDecimals(3)
-		self.presentationContrastSpin.setSingleStep(0.05)
-		self._set_compact_field(self.presentationContrastSpin)
-		self.presentationPercentileSpin = QDoubleSpinBox()
-		self.presentationPercentileSpin.setRange(50.0, 100.0)
-		self.presentationPercentileSpin.setDecimals(2)
-		self.presentationPercentileSpin.setSingleStep(0.1)
-		self._set_compact_field(self.presentationPercentileSpin)
-		self.presentationWindowCenterSpin = QDoubleSpinBox()
-		self.presentationWindowCenterSpin.setRange(-1e6, 1e6)
-		self.presentationWindowCenterSpin.setDecimals(3)
-		self.presentationWindowCenterSpin.setSingleStep(0.1)
-		self._set_compact_field(self.presentationWindowCenterSpin)
-		self.presentationWindowWidthSpin = QDoubleSpinBox()
-		self.presentationWindowWidthSpin.setRange(0.0, 1e6)
-		self.presentationWindowWidthSpin.setDecimals(3)
-		self.presentationWindowWidthSpin.setSingleStep(0.1)
-		self._set_compact_field(self.presentationWindowWidthSpin)
-		self.presentationOverlayAnnotationsCheck = QCheckBox("Overlay projected annotations")
-		self.presentationOverlayLabelsCheck = QCheckBox("Show labels")
-		self.presentationOverlayCrossSizeSpin = QSpinBox()
-		self.presentationOverlayCrossSizeSpin.setRange(1, 64)
-		self._set_compact_field(self.presentationOverlayCrossSizeSpin)
-		presentation_layout.addRow("Preset:", self.presentationPresetWidget)
-		presentation_layout.addRow("Mode:", self.presentationModeCombo)
-		presentation_layout.addRow("", self.presentationInvertCheck)
-		presentation_layout.addRow("Gamma:", self.presentationGammaSpin)
-		presentation_layout.addRow("Contrast:", self.presentationContrastSpin)
-		presentation_layout.addRow("Robust [%]:", self.presentationPercentileSpin)
-		presentation_layout.addRow("Window center:", self.presentationWindowCenterSpin)
-		presentation_layout.addRow("Window width:", self.presentationWindowWidthSpin)
-		presentation_layout.addRow("", self.presentationOverlayAnnotationsCheck)
-		presentation_layout.addRow("", self.presentationOverlayLabelsCheck)
-		presentation_layout.addRow("Cross size [px]:", self.presentationOverlayCrossSizeSpin)
-		presentationTabLayout.addWidget(presentationGroup)
-		presentationTabLayout.addStretch(1)
-
 		# ── Run tab ────────────────────────────────────────────────────
 		runTab = QWidget()
 		runTabLayout = QVBoxLayout(runTab)
 		runTabLayout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+		motionFrameWidget = QWidget()
+		motionFrameWidget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+		motionFrameLayout = QHBoxLayout(motionFrameWidget)
+		motionFrameLayout.setContentsMargins(0, 0, 0, 0)
+		motionFrameLayout.setSpacing(4)
+		self.motionFrameModeCombo = QComboBox()
+		self.motionFrameModeCombo.addItem("Active frame", "active")
+		self.motionFrameModeCombo.addItem("All frames", "all")
+		motionFrameLayout.addWidget(QLabel("Motion frames:"))
+		motionFrameLayout.addWidget(self.motionFrameModeCombo)
+		runTabLayout.addWidget(motionFrameWidget)
+		self.motionFrameInfoLabel = QLabel("For scenes without Motion this setting has no effect.")
+		self.motionFrameInfoLabel.setWordWrap(True)
+		runTabLayout.addWidget(self.motionFrameInfoLabel)
 
 		actionsWidget = QWidget()
 		actionsWidget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
-		actions_layout = QHBoxLayout(actionsWidget)
+		actions_layout = FlowLayout(actionsWidget)
 		actions_layout.setContentsMargins(0, 0, 0, 0)
 		actions_layout.setSpacing(4)
 		self.refreshButton = QPushButton("Refresh")
@@ -967,17 +914,6 @@ class PropVirtualXRay(PropWidget):
 		self.physicsMaterialWindowModeCombo.currentTextChanged.connect(self.on_physics_material_window_mode_changed)
 		self.physicsMaterialWindowSoftnessSpin.valueChanged.connect(self.on_physics_material_window_softness_changed)
 		self.physicsAutoBoneButton.clicked.connect(self.on_auto_bone_from_scene)
-		self.presentationModeCombo.currentTextChanged.connect(self.on_presentation_mode_changed)
-		self.presentationInvertCheck.toggled.connect(self.on_presentation_invert_changed)
-		self.presentationGammaSpin.valueChanged.connect(self.on_presentation_gamma_changed)
-		self.presentationContrastSpin.valueChanged.connect(self.on_presentation_contrast_changed)
-		self.presentationPercentileSpin.valueChanged.connect(self.on_presentation_percentile_changed)
-		self.presentationWindowCenterSpin.valueChanged.connect(self.on_presentation_window_changed)
-		self.presentationWindowWidthSpin.valueChanged.connect(self.on_presentation_window_changed)
-		self.presentationOverlayAnnotationsCheck.toggled.connect(self.on_presentation_overlay_annotations_changed)
-		self.presentationOverlayLabelsCheck.toggled.connect(self.on_presentation_overlay_labels_changed)
-		self.presentationOverlayCrossSizeSpin.valueChanged.connect(self.on_presentation_overlay_cross_size_changed)
-		self.applyPresentationPresetButton.clicked.connect(self.on_apply_presentation_preset)
 		self.physicsMuAirSpin.valueChanged.connect(self.on_advanced_physics_changed)
 		self.physicsMuWaterSpin.valueChanged.connect(self.on_advanced_physics_changed)
 		self.physicsHounsfieldAirSpin.valueChanged.connect(self.on_advanced_physics_changed)
@@ -998,6 +934,7 @@ class PropVirtualXRay(PropWidget):
 		self.sourcePreprocessOutputHighSpin.valueChanged.connect(self.on_advanced_source_changed)
 		self.sourceUseFillValueCheck.toggled.connect(self.on_advanced_source_changed)
 		self.sourceFillValueSpin.valueChanged.connect(self.on_advanced_source_changed)
+		self.motionFrameModeCombo.currentIndexChanged.connect(self.on_motion_frame_mode_changed)
 		self.geometryAdvancedCheck.toggled.connect(lambda checked: self.advancedSourceGroup.setVisible(checked))
 		self.physicsAdvancedCheck.toggled.connect(lambda checked: self.advancedPhysicsGroup.setVisible(checked))
 		self.refreshButton.clicked.connect(self.on_refresh_requested)
@@ -1039,17 +976,6 @@ class PropVirtualXRay(PropWidget):
 			self.physicsMaterialWindowWidthSpin,
 			self.physicsMaterialWindowModeCombo,
 			self.physicsMaterialWindowSoftnessSpin,
-			self.presentationModeCombo,
-			self.presentationPresetCombo,
-			self.presentationInvertCheck,
-			self.presentationGammaSpin,
-			self.presentationContrastSpin,
-			self.presentationPercentileSpin,
-			self.presentationWindowCenterSpin,
-			self.presentationWindowWidthSpin,
-			self.presentationOverlayAnnotationsCheck,
-			self.presentationOverlayLabelsCheck,
-			self.presentationOverlayCrossSizeSpin,
 			self.physicsMuAirSpin,
 			self.physicsMuWaterSpin,
 			self.physicsHounsfieldAirSpin,
@@ -1070,6 +996,7 @@ class PropVirtualXRay(PropWidget):
 			self.sourcePreprocessOutputHighSpin,
 			self.sourceUseFillValueCheck,
 			self.sourceFillValueSpin,
+			self.motionFrameModeCombo,
 		):
 			widget.blockSignals(b)
 
@@ -1090,21 +1017,6 @@ class PropVirtualXRay(PropWidget):
 		self.depthWindowAxisSpin.setEnabled(is_custom_planar)
 		self.depthAlignAxisButton.setEnabled(is_planar)
 		self.depthAlignOriginButton.setEnabled(is_planar)
-
-	def _update_presentation_visibility(self, obj: VirtualXRay):
-		"""Enable only presentation controls relevant to the selected display mode."""
-		mode = str(obj.presentation_mode).lower()
-		is_raw = mode == "raw"
-		is_digital = mode == "digital"
-		self.presentationInvertCheck.setEnabled(not is_raw)
-		self.presentationGammaSpin.setEnabled(not is_raw)
-		self.presentationContrastSpin.setEnabled(not is_raw)
-		self.presentationPercentileSpin.setEnabled(not is_raw)
-		self.presentationWindowCenterSpin.setEnabled(is_digital)
-		self.presentationWindowWidthSpin.setEnabled(is_digital)
-		overlay_enabled = bool(getattr(obj, "presentation_overlay_annotations", False))
-		self.presentationOverlayLabelsCheck.setEnabled(overlay_enabled)
-		self.presentationOverlayCrossSizeSpin.setEnabled(overlay_enabled)
 
 	def _update_physics_visibility(self, obj: VirtualXRay):
 		"""Enable only physics controls relevant to the selected material window mode."""
@@ -1163,16 +1075,6 @@ class PropVirtualXRay(PropWidget):
 		self.physicsMaterialWindowWidthSpin.setValue(0.0 if obj.physics_material_window_width is None else float(obj.physics_material_window_width))
 		self.physicsMaterialWindowModeCombo.setCurrentText(str(obj.physics_material_window_mode))
 		self.physicsMaterialWindowSoftnessSpin.setValue(float(obj.physics_material_window_softness))
-		self.presentationModeCombo.setCurrentText(str(obj.presentation_mode))
-		self.presentationInvertCheck.setChecked(bool(obj.presentation_invert))
-		self.presentationGammaSpin.setValue(float(obj.presentation_gamma))
-		self.presentationContrastSpin.setValue(float(obj.presentation_contrast))
-		self.presentationPercentileSpin.setValue(float(obj.presentation_robust_percentile))
-		self.presentationWindowCenterSpin.setValue(0.0 if obj.presentation_window_center is None else float(obj.presentation_window_center))
-		self.presentationWindowWidthSpin.setValue(0.0 if obj.presentation_window_width is None else float(obj.presentation_window_width))
-		self.presentationOverlayAnnotationsCheck.setChecked(bool(getattr(obj, "presentation_overlay_annotations", False)))
-		self.presentationOverlayLabelsCheck.setChecked(bool(getattr(obj, "presentation_overlay_labels", False)))
-		self.presentationOverlayCrossSizeSpin.setValue(int(getattr(obj, "presentation_overlay_cross_size_px", 6)))
 		self.physicsMuAirSpin.setValue(float(obj.physics_mu_air))
 		self.physicsMuWaterSpin.setValue(float(obj.physics_mu_water))
 		self.physicsHounsfieldAirSpin.setValue(float(obj.physics_hounsfield_air))
@@ -1193,6 +1095,9 @@ class PropVirtualXRay(PropWidget):
 		self.sourcePreprocessOutputHighSpin.setValue(float(obj.source_preprocess_output_high))
 		self.sourceUseFillValueCheck.setChecked(obj.source_fill_value is not None)
 		self.sourceFillValueSpin.setValue(0.0 if obj.source_fill_value is None else float(obj.source_fill_value))
+		motion_frame_mode = str(getattr(obj, "motion_frame_mode", "active")).strip().lower()
+		motion_frame_mode_index = self.motionFrameModeCombo.findData(motion_frame_mode)
+		self.motionFrameModeCombo.setCurrentIndex(0 if motion_frame_mode_index < 0 else motion_frame_mode_index)
 		self.volumesLabel.setText(str(len(obj.collect_xray_objects())))
 		self.renderInfoLabel.setText(obj.info())
 		self.updateDisplayButton.setEnabled(obj.last_raw_projection is not None)
@@ -1203,7 +1108,6 @@ class PropVirtualXRay(PropWidget):
 		self._update_depth_window_visibility(obj)
 		self._update_physics_visibility(obj)
 		self._update_advanced_source_visibility(obj)
-		self._update_presentation_visibility(obj)
 		self._rebuild_sources_tab(obj)
 		self.blockAll(False)
 
@@ -1213,12 +1117,6 @@ class PropVirtualXRay(PropWidget):
 		self.updateProperties()
 		AP.mainWin.dock["workspace"].refreshAll()
 		AP.updateAllViews()
-
-	def _after_presentation_change(self, obj: VirtualXRay):
-		"""Refresh presentation controls and propagate them to the detector image cache."""
-		self._after_change(obj)
-		if obj is not None and getattr(obj, "last_raw_projection", None) is not None:
-			self._display_image_array(obj, auto_window=False)
 
 	@pyqtSlot(str)
 	def on_mode_changed(self, mode):
@@ -1408,80 +1306,6 @@ class PropVirtualXRay(PropWidget):
 			f"{obj.info()}\nAuto bone threshold: T={estimate['threshold']:.0f} HU"
 		)
 
-	@pyqtSlot(str)
-	def on_presentation_mode_changed(self, value):
-		"""Store the currently selected presentation mode."""
-		obj = self.obj_ref()
-		obj.presentation_mode = str(value)
-		self._after_presentation_change(obj)
-
-	@pyqtSlot(bool)
-	def on_presentation_invert_changed(self, value):
-		"""Store the inversion state of the presentation model."""
-		obj = self.obj_ref()
-		obj.presentation_invert = bool(value)
-		self._after_presentation_change(obj)
-
-	@pyqtSlot(float)
-	def on_presentation_gamma_changed(self, value):
-		"""Store the gamma applied by the presentation model."""
-		obj = self.obj_ref()
-		obj.presentation_gamma = max(0.05, float(value))
-		self._after_presentation_change(obj)
-
-	@pyqtSlot(float)
-	def on_presentation_contrast_changed(self, value):
-		"""Store the contrast applied by the presentation model."""
-		obj = self.obj_ref()
-		obj.presentation_contrast = max(0.05, float(value))
-		self._after_presentation_change(obj)
-
-	@pyqtSlot(float)
-	def on_presentation_percentile_changed(self, value):
-		"""Store the robust percentile used by film-like and digital presentation."""
-		obj = self.obj_ref()
-		obj.presentation_robust_percentile = min(100.0, max(50.0, float(value)))
-		self._after_presentation_change(obj)
-
-	@pyqtSlot()
-	def on_presentation_window_changed(self):
-		"""Store optional digital-radiography window center and width."""
-		obj = self.obj_ref()
-		center = float(self.presentationWindowCenterSpin.value())
-		width = float(self.presentationWindowWidthSpin.value())
-		obj.presentation_window_center = center if width > 0.0 else None
-		obj.presentation_window_width = width if width > 0.0 else None
-		self._after_presentation_change(obj)
-
-	@pyqtSlot(bool)
-	def on_presentation_overlay_annotations_changed(self, value):
-		"""Store whether projected annotations should be overlaid on the display image."""
-		obj = self.obj_ref()
-		obj.presentation_overlay_annotations = bool(value)
-		self._after_presentation_change(obj)
-
-	@pyqtSlot(bool)
-	def on_presentation_overlay_labels_changed(self, value):
-		"""Store whether projected annotation labels should be painted on the display image."""
-		obj = self.obj_ref()
-		obj.presentation_overlay_labels = bool(value)
-		self._after_presentation_change(obj)
-
-	@pyqtSlot(int)
-	def on_presentation_overlay_cross_size_changed(self, value):
-		"""Store the marker size used when projected annotations are overlaid on the display image."""
-		obj = self.obj_ref()
-		obj.presentation_overlay_cross_size_px = max(1, int(value))
-		self._after_presentation_change(obj)
-
-	@pyqtSlot()
-	def on_apply_presentation_preset(self):
-		"""Apply one predefined presentation preset for quick visual comparison."""
-		obj = self.obj_ref()
-		if obj is None:
-			return
-		obj.apply_presentation_preset(self.presentationPresetCombo.currentText())
-		self._after_presentation_change(obj)
 
 	@pyqtSlot()
 	def on_refresh_requested(self):
@@ -1520,6 +1344,15 @@ class PropVirtualXRay(PropWidget):
 		obj.source_preprocess_output_low = float(self.sourcePreprocessOutputLowSpin.value())
 		obj.source_preprocess_output_high = float(self.sourcePreprocessOutputHighSpin.value())
 		obj.source_fill_value = float(self.sourceFillValueSpin.value()) if self.sourceUseFillValueCheck.isChecked() else None
+		self._after_change(obj)
+
+	@pyqtSlot(int)
+	def on_motion_frame_mode_changed(self, _index):
+		"""Store whether projection should use one active frame or all motion frames."""
+		obj = self.obj_ref()
+		if obj is None:
+			return
+		obj.motion_frame_mode = str(self.motionFrameModeCombo.currentData() or "active")
 		self._after_change(obj)
 
 	def _display_image_array(self, obj, auto_window=False):

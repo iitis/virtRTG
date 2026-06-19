@@ -48,3 +48,45 @@ def test_digital_radiography_windowing_respects_explicit_window(sample_projectio
 	assert np.isclose(result[0, 0], 0.0)
 	assert np.isclose(result[1, 2], 1.0)
 
+
+def test_digital_radiography_log1p_compresses_high_dynamic_range():
+	"""Compress extreme DRR-like values before normalization when `log1p` is enabled."""
+	image = np.array([[0.0, 10.0, 1000.0]], dtype=np.float32)
+	linear = DigitalRadiographyPresentationModel(
+		invert=False,
+		gamma=1.0,
+		contrast=1.0,
+		input_transform="linear",
+	).apply(image)
+	logged = DigitalRadiographyPresentationModel(
+		invert=False,
+		gamma=1.0,
+		contrast=1.0,
+		input_transform="log1p",
+	).apply(image)
+
+	assert linear.dtype == np.float32
+	assert logged.dtype == np.float32
+	assert logged[0, 1] > linear[0, 1]
+
+
+def test_digital_radiography_clahe_increases_local_contrast():
+	"""Increase local contrast on a low-contrast gradient when CLAHE is enabled."""
+	image = np.tile(np.linspace(100.0, 120.0, 32, dtype=np.float32), (32, 1))
+	base = DigitalRadiographyPresentationModel(
+		invert=False,
+		gamma=1.0,
+		contrast=1.0,
+		local_enhancement="off",
+	).apply(image)
+	enhanced = DigitalRadiographyPresentationModel(
+		invert=False,
+		gamma=1.0,
+		contrast=1.0,
+		local_enhancement="clahe",
+		clahe_clip_limit=2.0,
+		clahe_tile_grid_size=8,
+	).apply(image)
+
+	assert enhanced.dtype == np.float32
+	assert float(np.max(np.abs(np.diff(enhanced, axis=1)))) >= float(np.max(np.abs(np.diff(base, axis=1))))

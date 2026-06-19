@@ -1051,11 +1051,13 @@ class XRayProjector:
 		source_projections = []
 		projection_mode_name = "cone" if geometry.is_cone_beam() else "parallel"
 		for source_index, source in enumerate(self.sample_sources):
-			source_label = getattr(
-				getattr(source, "mesh", None) or getattr(source, "volumetric", None),
-				"label",
-				type(source).__name__,
-			)
+			source_label = getattr(source, "projection_label", None)
+			if source_label is None:
+				source_label = getattr(
+					getattr(source, "mesh", None) or getattr(source, "volumetric", None),
+					"label",
+					type(source).__name__,
+				)
 			source_line_integral = per_source_projection_flat[source_index].reshape(height, width).astype(np.float32, copy=True)
 			source_detector_image = physics_model.integral_to_image(
 				per_source_projection_flat[source_index],

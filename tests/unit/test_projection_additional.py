@@ -7,6 +7,8 @@ from dataclasses import replace
 
 import numpy as np
 
+from dpVision import Mesh, Motion, Transform, Volumetric
+
 from plugins.virtRTG.xray.xrayPresentation import RawPresentationModel
 from plugins.virtRTG.xray.xrayProjection import (
 	XRayPhysicsModel,
@@ -20,7 +22,15 @@ from plugins.virtRTG.xray.xrayAnnotationOverlay import (
 	XRayOverlayProjectionSet,
 	XRayOverlayStyle,
 )
+from plugins.virtRTG.detectorImage import DetectorImage
 from plugins.virtRTG.virtualXRay import VirtualXRay
+
+
+def _translated_transform(tx=0.0, ty=0.0, tz=0.0):
+	"""Build one simple translation transform for scene-assembly tests."""
+	transform = Transform()
+	transform.setTranslation(tx, ty, tz)
+	return transform
 
 
 class _ConstantBoxSource:
@@ -374,3 +384,226 @@ def test_scene_sources_can_override_material_response_per_source():
 	)[0])
 
 	assert np.allclose(image, [[expected_mu * 3.0]], atol=1e-6)
+
+
+def test_detector_image_projection_package_roundtrip_preserves_layers_and_metadata(tmp_path):
+	"""Keep full projection-package context when importing from VirtualXRay and exporting again."""
+	virtual_xray = VirtualXRay()
+	virtual_xray.label = "vx-package"
+	virtual_xray.last_raw_projection = np.array([[1.0, 2.0]], dtype=np.float32)
+	virtual_xray.last_line_integral_projection = np.array([[3.0, 4.0]], dtype=np.float32)
+	virtual_xray.last_source_projections = [
+		type("SourceProjection", (), {
+			"source_index": 0,
+			"label": "Bone",
+			"source_type": "mesh",
+			"detector_image": np.array([[5.0, 6.0]], dtype=np.float32),
+			"line_integral_image": np.array([[7.0, 8.0]], dtype=np.float32),
+		})()
+	]
+	virtual_xray.last_projected_annotations = XRayOverlayProjectionSet(
+		detector_shape_hw=(1, 2),
+		items=[
+			XRayOverlayCross(
+				kind="AnnotationPoint",
+				label="P1",
+				pixel_uv=(0.0, 0.0),
+				style=XRayOverlayStyle(color_rgba=(255, 0, 0, 255), line_width_px=1, marker_size_px=5),
+			)
+		],
+	)
+	virtual_xray.set_detector_image_defaults({"mode": "film", "gamma": 1.5})
+
+	detector_image = DetectorImage()
+	detector_image.sync_from_virtual_xray(virtual_xray, auto_window=False)
+
+	layer_keys = [layer_key for layer_key, _layer_label in detector_image.package_layer_choices()]
+	assert "composited_raw" in layer_keys
+	assert "composited_line_integral" in layer_keys
+	assert "source_000_raw" in layer_keys
+	assert "source_000_line_integral" in layer_keys
+	assert detector_image.package_metadata["simulation_context"]["detector_image_defaults"]["mode"] == "film"
+
+	export_path = tmp_path / "detector_package.npz"
+	detector_image.set_active_layer("source_000_line_integral", auto_window=False)
+	detector_image.export_array(export_path)
+	with np.load(export_path, allow_pickle=False) as archive:
+		assert "metadata_json" in archive
+		assert "image" not in archive
+		assert any(name.startswith("image_") for name in archive.files)
+
+	imported = DetectorImage()
+	imported.import_array(export_path, auto_window=False)
+
+	assert imported.active_layer_key == "source_000_line_integral"
+	assert np.allclose(imported.raw_array, [[7.0, 8.0]], atol=1e-6)
+	assert imported.package_metadata["simulation_context"]["source_virtual_xray_label"] == "vx-package"
+	assert imported.overlay_projection_set is not None
+	assert len(imported.overlay_projection_set.items) == 1
+
+	imported.set_active_layer("composited_raw", auto_window=False)
+	assert np.allclose(imported.raw_array, [[1.0, 2.0]], atol=1e-6)
+
+
+def test_detector_image_defaults_roundtrip_preserves_log_and_clahe_settings(tmp_path):
+	"""Keep extended presentation settings when exporting and importing one detector package."""
+	detector_image = DetectorImage()
+	detector_image.label = "detector-defaults"
+	detector_image.setArray(np.array([[0.0, 10.0, 1000.0]], dtype=np.float32), auto_window=False)
+	detector_image.apply_presentation_defaults({
+		"mode": "digital",
+		"gamma": 1.3,
+		"contrast": 1.1,
+		"input_transform": "log1p",
+		"local_enhancement": "clahe",
+		"clahe_clip_limit": 3.0,
+		"clahe_tile_grid_size": 12,
+		"robust_low_percentile": 1.5,
+	})
+
+	export_path = tmp_path / "detector_defaults_roundtrip.npz"
+	detector_image.export_array(export_path)
+
+	imported = DetectorImage()
+	imported.import_array(export_path, auto_window=False)
+
+	assert imported.presentation_input_transform == "log1p"
+	assert imported.presentation_local_enhancement == "clahe"
+	assert imported.presentation_clahe_clip_limit == 3.0
+	assert imported.presentation_clahe_tile_grid_size == 12
+	assert imported.presentation_robust_low_percentile == 1.5
+
+
+def test_detector_image_auto_window_uses_two_sided_robust_percentiles():
+	"""Use both lower and upper robust percentiles when computing one automatic display window."""
+	detector_image = DetectorImage()
+	detector_image.setArray(np.array([[0.0, 1.0, 2.0, 100.0]], dtype=np.float32), auto_window=False)
+	detector_image.presentation_robust_low_percentile = 25.0
+	detector_image.presentation_robust_percentile = 75.0
+
+	vmin, vmax = detector_image.auto_window_range()
+
+	assert np.isclose(vmin, 0.75)
+	assert np.isclose(vmax, 26.5)
+
+
+def test_virtual_xray_scene_sources_use_active_motion_frame_by_default():
+	"""Use only the active `Motion` frame unless the expansion mode requests all frames."""
+	virtual_xray = VirtualXRay()
+	parent_transform = _translated_transform(10.0, 0.0, 0.0)
+	virtual_xray.addChild(parent_transform)
+
+	motion = Motion([
+		Motion.FrameVal(0, _translated_transform(1.0, 2.0, 3.0)),
+		Motion.FrameVal(0, _translated_transform(100.0, 200.0, 300.0)),
+	], parent=parent_transform)
+	parent_transform.addChild(motion)
+	motion.setKey(1)
+
+	child_transform = _translated_transform(0.5, 0.0, 0.0)
+	motion.addChild(child_transform)
+
+	mesh = Mesh(parent=child_transform)
+	child_transform.addChild(mesh)
+	mesh.addVertex(0.0, 0.0, 0.0)
+	mesh.addVertex(1.0, 0.0, 0.0)
+	mesh.addVertex(0.0, 1.0, 0.0)
+	mesh.addFace([0, 1, 2])
+
+	volume = Volumetric(parent=child_transform)
+	child_transform.addChild(volume)
+	volume.m_volume = np.zeros((1, 1, 1), dtype=np.float32)
+	volume.shape = volume.m_volume.shape
+	volume.metadata = []
+
+	sources = virtual_xray.scene_sources()
+	mesh_sources = [source for source in sources if hasattr(source, "mesh") and source.mesh is mesh]
+	volume_sources = [source for source in sources if hasattr(source, "volumetric") and source.volumetric is volume]
+
+	assert len(mesh_sources) == 1
+	assert len(volume_sources) == 1
+	expected = np.eye(4, dtype=np.float32)
+	expected[:3, 3] = [110.5, 200.0, 300.0]
+	assert np.allclose(mesh_sources[0].global_transform, expected, atol=1e-6)
+	assert np.allclose(volume_sources[0].global_transform, expected, atol=1e-6)
+
+
+def test_virtual_xray_scene_sources_expand_all_frames_when_requested():
+	"""Expand one `Motion` subtree into separate source instances for all frames."""
+	virtual_xray = VirtualXRay()
+	virtual_xray.motion_frame_mode = "all"
+	parent_transform = _translated_transform(10.0, 0.0, 0.0)
+	virtual_xray.addChild(parent_transform)
+
+	motion = Motion([
+		Motion.FrameVal(0, _translated_transform(1.0, 2.0, 3.0)),
+		Motion.FrameVal(0, _translated_transform(100.0, 200.0, 300.0)),
+	], parent=parent_transform)
+	parent_transform.addChild(motion)
+	motion.setKey(1)
+
+	child_transform = _translated_transform(0.5, 0.0, 0.0)
+	motion.addChild(child_transform)
+
+	mesh = Mesh(parent=child_transform)
+	child_transform.addChild(mesh)
+	mesh.addVertex(0.0, 0.0, 0.0)
+	mesh.addVertex(1.0, 0.0, 0.0)
+	mesh.addVertex(0.0, 1.0, 0.0)
+	mesh.addFace([0, 1, 2])
+
+	sources = virtual_xray.scene_sources()
+	mesh_sources = [source for source in sources if hasattr(source, "mesh") and source.mesh is mesh]
+
+	assert len(mesh_sources) == 2
+	assert [source.projection_label for source in mesh_sources] == [
+		"Mesh [frame 000]",
+		"Mesh [frame 001]",
+	]
+
+	expected0 = np.eye(4, dtype=np.float32)
+	expected0[:3, 3] = [11.5, 2.0, 3.0]
+	expected1 = np.eye(4, dtype=np.float32)
+	expected1[:3, 3] = [110.5, 200.0, 300.0]
+	assert np.allclose(mesh_sources[0].global_transform, expected0, atol=1e-6)
+	assert np.allclose(mesh_sources[1].global_transform, expected1, atol=1e-6)
+
+
+def test_virtual_xray_scene_source_groups_expand_single_motion_into_all_frames():
+	"""Build one source group per frame when the subtree contains a single `Motion`."""
+	virtual_xray = VirtualXRay()
+	parent_transform = _translated_transform(10.0, 0.0, 0.0)
+	virtual_xray.addChild(parent_transform)
+
+	motion = Motion([
+		Motion.FrameVal(0, _translated_transform(1.0, 2.0, 3.0)),
+		Motion.FrameVal(0, _translated_transform(4.0, 5.0, 6.0)),
+	], parent=parent_transform)
+	parent_transform.addChild(motion)
+	motion.setKey(1)
+
+	child_transform = _translated_transform(0.5, 0.0, 0.0)
+	motion.addChild(child_transform)
+
+	mesh = Mesh(parent=child_transform)
+	child_transform.addChild(mesh)
+	mesh.addVertex(0.0, 0.0, 0.0)
+	mesh.addVertex(1.0, 0.0, 0.0)
+	mesh.addVertex(0.0, 1.0, 0.0)
+	mesh.addFace([0, 1, 2])
+
+	groups = virtual_xray.scene_source_groups()
+
+	assert [group["frame_index"] for group in groups] == [0, 1]
+	assert [group["label"] for group in groups] == ["frame_000", "frame_001"]
+
+	frame0_mesh_source = next(source for source in groups[0]["sources"] if hasattr(source, "mesh") and source.mesh is mesh)
+	frame1_mesh_source = next(source for source in groups[1]["sources"] if hasattr(source, "mesh") and source.mesh is mesh)
+
+	expected0 = np.eye(4, dtype=np.float32)
+	expected0[:3, 3] = [11.5, 2.0, 3.0]
+	expected1 = np.eye(4, dtype=np.float32)
+	expected1[:3, 3] = [14.5, 5.0, 6.0]
+
+	assert np.allclose(frame0_mesh_source.global_transform, expected0, atol=1e-6)
+	assert np.allclose(frame1_mesh_source.global_transform, expected1, atol=1e-6)

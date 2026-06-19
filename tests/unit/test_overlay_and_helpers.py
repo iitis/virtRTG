@@ -265,6 +265,35 @@ def test_overlay_projectors_build_cross_and_polyline_items():
 	assert polyline_item.metadata["point_count"] == 2
 
 
+def test_overlay_context_can_suffix_labels_and_override_object_transform():
+	"""Allow frame-specific label suffixes and explicit reference-space transforms."""
+	context = XRayAnnotationProjectionContext(
+		geometry=_FakeGeometry(ray_direction_ref=[0.0, 0.0, 1.0]),
+		reference_transform=np.eye(4, dtype=np.float32),
+		object_transform_resolver=lambda _scene_object: np.array(
+			[
+				[1.0, 0.0, 0.0, 3.0],
+				[0.0, 1.0, 0.0, 4.0],
+				[0.0, 0.0, 1.0, -2.0],
+				[0.0, 0.0, 0.0, 1.0],
+			],
+			dtype=np.float32,
+		),
+		overlay_label_suffix=" [frame 007]",
+	)
+	projector = AnnotationPointProjector()
+	projector.scene_type = _FakePoint
+	point = _FakePoint(
+		label="point-a",
+		point_xyz=[0.0, 0.0, 0.0],
+	)
+
+	item = projector.project(point, context)[0]
+
+	assert item.label == "point-a [frame 007]"
+	assert item.pixel_uv == (3.0, 4.0)
+
+
 def test_annotation_path_projector_hides_polylines_shorter_than_two_points():
 	"""Mark one projected path as invisible when fewer than two points survive."""
 	context = XRayAnnotationProjectionContext(
