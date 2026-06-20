@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from time import perf_counter
 import logging
 
@@ -50,7 +51,7 @@ class _CollapsibleGroup(QWidget):
 	def __init__(self, title, collapsed=True, parent=None):
 		"""Create one collapsible group with a body that participates in relayout."""
 		super().__init__(parent)
-		self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+		self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 		outer = QVBoxLayout(self)
 		outer.setContentsMargins(0, 2, 0, 2)
 		outer.setSpacing(0)
@@ -70,7 +71,7 @@ class _CollapsibleGroup(QWidget):
 		outer.addWidget(self._btn)
 
 		self._body = QWidget()
-		self._body.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+		self._body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 		self._body.setVisible(not collapsed)
 		outer.addWidget(self._body)
 
@@ -95,6 +96,36 @@ class _CollapsibleGroup(QWidget):
 		return self._body
 
 
+class _FlowGroupBox(QGroupBox):
+	"""Group box that forwards height-for-width to its wrapping child layout."""
+
+	def hasHeightForWidth(self):
+		"""Report height-for-width when the installed layout supports it."""
+		layout = self.layout()
+		return bool(layout is not None and layout.hasHeightForWidth())
+
+	def heightForWidth(self, width):
+		"""Return the group height needed for the given content width."""
+		layout = self.layout()
+		if layout is None or not layout.hasHeightForWidth():
+			return super().heightForWidth(width)
+		return layout.totalHeightForWidth(max(0, width))
+
+	def minimumSizeHint(self):
+		"""Keep the minimum size consistent with the flow layout's wrapped content."""
+		layout = self.layout()
+		if layout is None:
+			return super().minimumSizeHint()
+		return layout.minimumSize()
+
+	def sizeHint(self):
+		"""Prefer the current width and let the height follow the wrapped content."""
+		size_hint = super().sizeHint()
+		if self.hasHeightForWidth():
+			size_hint.setHeight(self.heightForWidth(size_hint.width()))
+		return size_hint
+
+
 class PropVirtualXRay(PropWidget):
 	"""Edit basic source and detector parameters of one `VirtualXRay` scene node."""
 
@@ -105,27 +136,16 @@ class PropVirtualXRay(PropWidget):
 		self._setup_ui()
 		self._connect_signals()
 
-	def _setup_ui(self):
-		"""Create the full property form for detector, source and sampling parameters."""
-		layout = QVBoxLayout(self)
-		layout.setContentsMargins(0, 0, 0, 0)
-		layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-		self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-		self.tabs = QTabWidget()
-		self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-		# layout.addWidget(self.tabs)
-
+	def _create_geom_tab(self): 
 		# ── Geometry tab: Scene + Detector + Source + Sampling + Advanced source ──
 		geomTab = QWidget()
 		geomLayout = QVBoxLayout(geomTab)
-		geomLayout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+		geomLayout.setAlignment(Qt.AlignTop)
 
-		sceneGroup = QGroupBox("Scene")
-		self._set_compact_group(sceneGroup)
-		scene_layout = QFormLayout(sceneGroup)
-		self._configure_form_layout(scene_layout)
+		sceneGroup, scene_layout = self._create_flow_group("Scene")
 		self.volumesLabel = QLabel("-")
+		self._set_compact_field(self.volumesLabel)
 		self.geometryPresetWidget = QWidget()
 		self._set_compact_field(self.geometryPresetWidget)
 		geometry_preset_layout = QHBoxLayout(self.geometryPresetWidget)
@@ -134,21 +154,22 @@ class PropVirtualXRay(PropWidget):
 		self.geometryPresetCombo = QComboBox()
 		self.geometryPresetCombo.addItems(VirtualXRay.geometry_preset_names())
 		self._set_compact_field(self.geometryPresetCombo)
-		self.applyGeometryPresetButton = QPushButton("Apply")
+		self.geometryPresetCombo.setMinimumContentsLength(8)
+		self.geometryPresetCombo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+		self.applyGeometryPresetButton = QPushButton("Use")
 		self.applyGeometryPresetButton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+		self.applyGeometryPresetButton.setToolTip("Apply the selected geometry preset.")
 		geometry_preset_layout.addWidget(self.geometryPresetCombo)
 		geometry_preset_layout.addWidget(self.applyGeometryPresetButton)
 		self.modeCombo = QComboBox()
 		self.modeCombo.addItems(["cone", "parallel"])
 		self._set_compact_field(self.modeCombo)
-		scene_layout.addRow("Sources:", self.volumesLabel)
-		scene_layout.addRow("Preset:", self.geometryPresetWidget)
-		scene_layout.addRow("Mode:", self.modeCombo)
+		self._add_flow_control(scene_layout, "Objects", self.volumesLabel)
+		self._add_flow_control(scene_layout, "Preset", self.geometryPresetWidget)
+		self._add_flow_control(scene_layout, "Mode", self.modeCombo)
 		geomLayout.addWidget(sceneGroup)
 
-		detectorGroup = _CollapsibleGroup("Detector", collapsed=True)
-		detector_layout = QFormLayout(detectorGroup.body())
-		self._configure_form_layout(detector_layout)
+		detectorGroup, detector_layout = self._create_collapsible_flow_group("Detector", collapsed=True)
 		self.detectorCenterSpin = MultiSpinBox(3, labels=("X", "Y", "Z"))
 		self.detectorNormalSpin = MultiSpinBox(3, labels=("X", "Y", "Z"))
 		self.detectorUpSpin = MultiSpinBox(3, labels=("X", "Y", "Z"))
@@ -174,28 +195,23 @@ class PropVirtualXRay(PropWidget):
 		detector_shape_layout.addWidget(self.detectorHeightSpin)
 		detector_shape_layout.addWidget(QLabel("W"))
 		detector_shape_layout.addWidget(self.detectorWidthSpin)
-		detector_layout.addRow("Center [mm]:", self.detectorCenterSpin)
-		detector_layout.addRow("Normal:", self.detectorNormalSpin)
-		detector_layout.addRow("Up:", self.detectorUpSpin)
-		detector_layout.addRow("Pixel size [mm]:", self.detectorPixelSizeSpin)
-		detector_layout.addRow("Shape [px]:", self.detectorShapeWidget)
+		self._add_flow_control(detector_layout, "Center [mm]", self.detectorCenterSpin)
+		self._add_flow_control(detector_layout, "Normal", self.detectorNormalSpin)
+		self._add_flow_control(detector_layout, "Up", self.detectorUpSpin)
+		self._add_flow_control(detector_layout, "Pixel size [mm]", self.detectorPixelSizeSpin)
+		self._add_flow_control(detector_layout, "Shape [px]", self.detectorShapeWidget)
 		geomLayout.addWidget(detectorGroup)
 
-		sourceGroup = _CollapsibleGroup("Source", collapsed=True)
-		source_layout = QFormLayout(sourceGroup.body())
-		self._configure_form_layout(source_layout)
+		sourceGroup, source_layout = self._create_collapsible_flow_group("Source", collapsed=True)
 		self.sourcePositionSpin = MultiSpinBox(3, labels=("X", "Y", "Z"))
 		self.rayDirectionSpin = MultiSpinBox(3, labels=("X", "Y", "Z"))
 		self._set_compact_field(self.sourcePositionSpin)
 		self._set_compact_field(self.rayDirectionSpin)
-		source_layout.addRow("Position [mm]:", self.sourcePositionSpin)
-		source_layout.addRow("Direction:", self.rayDirectionSpin)
+		self._add_flow_control(source_layout, "Position [mm]", self.sourcePositionSpin)
+		self._add_flow_control(source_layout, "Direction", self.rayDirectionSpin)
 		geomLayout.addWidget(sourceGroup)
 
-		samplingGroup = QGroupBox("Sampling")
-		self._set_compact_group(samplingGroup)
-		sampling_layout = QFormLayout(samplingGroup)
-		self._configure_form_layout(sampling_layout)
+		samplingGroup, sampling_layout = self._create_flow_group("Sampling")
 		self.stepSpin = QDoubleSpinBox()
 		self.stepSpin.setRange(0.01, 50.0)
 		self.stepSpin.setDecimals(3)
@@ -204,13 +220,11 @@ class PropVirtualXRay(PropWidget):
 		self.qualityCombo = QComboBox()
 		self.qualityCombo.addItems(["draft", "normal", "high", "custom"])
 		self._set_compact_field(self.qualityCombo)
-		sampling_layout.addRow("Step [mm]:", self.stepSpin)
-		sampling_layout.addRow("Quality:", self.qualityCombo)
+		self._add_flow_control(sampling_layout, "Step [mm]", self.stepSpin)
+		self._add_flow_control(sampling_layout, "Quality", self.qualityCombo)
 		geomLayout.addWidget(samplingGroup)
 
-		depthWindowGroup = _CollapsibleGroup("Depth window", collapsed=True)
-		depth_window_layout = QFormLayout(depthWindowGroup.body())
-		self._configure_form_layout(depth_window_layout)
+		depthWindowGroup, depth_window_layout = self._create_collapsible_flow_group("Depth window", collapsed=True)
 		self.depthWindowModeCombo = QComboBox()
 		self.depthWindowModeCombo.addItems(["off", "ray", "planar_auto", "planar_custom"])
 		self._set_compact_field(self.depthWindowModeCombo)
@@ -232,20 +246,17 @@ class PropVirtualXRay(PropWidget):
 		self.depthAlignOriginButton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
 		depth_tools_layout.addWidget(self.depthAlignAxisButton)
 		depth_tools_layout.addWidget(self.depthAlignOriginButton)
-		depth_window_layout.addRow("Mode:", self.depthWindowModeCombo)
-		depth_window_layout.addRow("Range [mm]:", self.depthWindowRangeSpin)
-		depth_window_layout.addRow("Origin [mm]:", self.depthWindowOriginSpin)
-		depth_window_layout.addRow("Axis:", self.depthWindowAxisSpin)
-		depth_window_layout.addRow("", self.depthWindowToolsWidget)
+		self._add_flow_control(depth_window_layout, "Mode", self.depthWindowModeCombo)
+		self._add_flow_control(depth_window_layout, "Range [mm]", self.depthWindowRangeSpin)
+		self._add_flow_control(depth_window_layout, "Origin [mm]", self.depthWindowOriginSpin)
+		self._add_flow_control(depth_window_layout, "Axis", self.depthWindowAxisSpin)
+		self._add_flow_control(depth_window_layout, "Tools", self.depthWindowToolsWidget)
 		geomLayout.addWidget(depthWindowGroup)
 
 		self.geometryAdvancedCheck = QCheckBox("Show advanced")
 		geomLayout.addWidget(self.geometryAdvancedCheck)
 
-		self.advancedSourceGroup = QGroupBox("Advanced")
-		self._set_compact_group(self.advancedSourceGroup)
-		advanced_source_layout = QFormLayout(self.advancedSourceGroup)
-		self._configure_form_layout(advanced_source_layout)
+		self.advancedSourceGroup, advanced_source_layout = self._create_flow_group("Advanced")
 		self.sourceInterpolationCombo = QComboBox()
 		self.sourceInterpolationCombo.addItems(["nearest", "linear", "cubic"])
 		self._set_compact_field(self.sourceInterpolationCombo)
@@ -278,158 +289,171 @@ class PropVirtualXRay(PropWidget):
 		self.sourceFillValueSpin.setDecimals(3)
 		self.sourceFillValueSpin.setSingleStep(1.0)
 		self._set_compact_field(self.sourceFillValueSpin)
-		advanced_source_layout.addRow("Interpolation:", self.sourceInterpolationCombo)
-		advanced_source_layout.addRow("Preprocess:", self.sourcePreprocessModeCombo)
-		advanced_source_layout.addRow("Input low [%]:", self.sourcePreprocessLowPercentileSpin)
-		advanced_source_layout.addRow("Input high [%]:", self.sourcePreprocessHighPercentileSpin)
-		advanced_source_layout.addRow("Output low:", self.sourcePreprocessOutputLowSpin)
-		advanced_source_layout.addRow("Output high:", self.sourcePreprocessOutputHighSpin)
-		advanced_source_layout.addRow("", self.sourceUseFillValueCheck)
-		advanced_source_layout.addRow("Fill value:", self.sourceFillValueSpin)
+		self._add_flow_control(advanced_source_layout, "Interpolation", self.sourceInterpolationCombo)
+		self._add_flow_control(advanced_source_layout, "Preprocess", self.sourcePreprocessModeCombo)
+		self._add_flow_control(advanced_source_layout, "Input low [%]", self.sourcePreprocessLowPercentileSpin)
+		self._add_flow_control(advanced_source_layout, "Input high [%]", self.sourcePreprocessHighPercentileSpin)
+		self._add_flow_control(advanced_source_layout, "Output low", self.sourcePreprocessOutputLowSpin)
+		self._add_flow_control(advanced_source_layout, "Output high", self.sourcePreprocessOutputHighSpin)
+		self._add_flow_control(advanced_source_layout, "", self.sourceUseFillValueCheck)
+		self._add_flow_control(advanced_source_layout, "Fill value", self.sourceFillValueSpin)
 		self.advancedSourceGroup.setVisible(False)
 		geomLayout.addWidget(self.advancedSourceGroup)
 
 		geomLayout.addStretch(1)
-		self.tabs.addTab(geomTab, "Geometry")
+		return geomTab
+	
+	def _create_phys_tab(self):
 
+		def _create_physicsGroup(self):
+			physicsGroup, physics_layout = self._create_flow_group("Material filter")
+			self.physicsMaterialWindowCenterSpin = QDoubleSpinBox()
+			self.physicsMaterialWindowCenterSpin.setRange(-1e6, 1e6)
+			self.physicsMaterialWindowCenterSpin.setDecimals(3)
+			self.physicsMaterialWindowCenterSpin.setSingleStep(1.0)
+			self._set_compact_field(self.physicsMaterialWindowCenterSpin)
+			self.physicsMaterialResponseModeCombo = QComboBox()
+			self.physicsMaterialResponseModeCombo.addItems(["linear", "piecewise_bone", "piecewise_soft_tissue", "bone_threshold"])
+			self._set_compact_field(self.physicsMaterialResponseModeCombo)
+			self.physicsBoneThresholdSpin = QDoubleSpinBox()
+			self.physicsBoneThresholdSpin.setRange(-1e6, 1e6)
+			self.physicsBoneThresholdSpin.setDecimals(3)
+			self.physicsBoneThresholdSpin.setSingleStep(1.0)
+			self._set_compact_field(self.physicsBoneThresholdSpin)
+			self.physicsBoneThresholdSoftnessSpin = QDoubleSpinBox()
+			self.physicsBoneThresholdSoftnessSpin.setRange(0.0, 1e6)
+			self.physicsBoneThresholdSoftnessSpin.setDecimals(3)
+			self.physicsBoneThresholdSoftnessSpin.setSingleStep(1.0)
+			self._set_compact_field(self.physicsBoneThresholdSoftnessSpin)
+			self.physicsMaterialWindowWidthSpin = QDoubleSpinBox()
+			self.physicsMaterialWindowWidthSpin.setRange(0.0, 1e6)
+			self.physicsMaterialWindowWidthSpin.setDecimals(3)
+			self.physicsMaterialWindowWidthSpin.setSingleStep(1.0)
+			self._set_compact_field(self.physicsMaterialWindowWidthSpin)
+			self.physicsMaterialWindowModeCombo = QComboBox()
+			self.physicsMaterialWindowModeCombo.addItems(["hard", "linear", "sigmoid"])
+			self._set_compact_field(self.physicsMaterialWindowModeCombo)
+			self.physicsMaterialWindowSoftnessSpin = QDoubleSpinBox()
+			self.physicsMaterialWindowSoftnessSpin.setRange(0.0, 1e6)
+			self.physicsMaterialWindowSoftnessSpin.setDecimals(3)
+			self.physicsMaterialWindowSoftnessSpin.setSingleStep(1.0)
+			self._set_compact_field(self.physicsMaterialWindowSoftnessSpin)
+			self.physicsAutoBoneButton = QPushButton("Auto bone threshold")
+			self.physicsAutoBoneButton.setToolTip("Automatically set the bone threshold based on the current volumes and source energy.")
+			self.physicsAutoBoneButton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+			self._add_flow_control(physics_layout, "Response", self.physicsMaterialResponseModeCombo)
+			self._add_flow_control(physics_layout, "Bone thresh.", self.physicsBoneThresholdSpin)
+			self._add_flow_control(physics_layout, "Bone softn.", self.physicsBoneThresholdSoftnessSpin)
+			self._add_flow_control(physics_layout, "Center [HU]", self.physicsMaterialWindowCenterSpin)
+			self._add_flow_control(physics_layout, "Width [HU]", self.physicsMaterialWindowWidthSpin)
+			self._add_flow_control(physics_layout, "Mode", self.physicsMaterialWindowModeCombo)
+			self._add_flow_control(physics_layout, "Softness [HU]", self.physicsMaterialWindowSoftnessSpin)
+			self._add_flow_control(physics_layout, "", self.physicsAutoBoneButton)
+			return physicsGroup
+	
+		def _create_advancedPhysicsGroup(self):
+			advancedPhysicsGroup = _FlowGroupBox("Advanced")
+			advancedPhysicsGroup.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+			advanced_physics_layout = FlowLayout(advancedPhysicsGroup)
+			advanced_physics_layout.setContentsMargins(6, 6, 6, 6)
+			advanced_physics_layout.setSpacing(4)
+			advanced_physics_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+			self.physicsMuAirSpin = QDoubleSpinBox()
+			self.physicsMuAirSpin.setRange(-1e6, 1e6)
+			self.physicsMuAirSpin.setDecimals(6)
+			self.physicsMuAirSpin.setSingleStep(0.001)
+			self._set_compact_field(self.physicsMuAirSpin)
+			self.physicsMuWaterSpin = QDoubleSpinBox()
+			self.physicsMuWaterSpin.setRange(-1e6, 1e6)
+			self.physicsMuWaterSpin.setDecimals(6)
+			self.physicsMuWaterSpin.setSingleStep(0.001)
+			self._set_compact_field(self.physicsMuWaterSpin)
+			self.physicsHounsfieldAirSpin = QDoubleSpinBox()
+			self.physicsHounsfieldAirSpin.setRange(-1e6, 1e6)
+			self.physicsHounsfieldAirSpin.setDecimals(3)
+			self.physicsHounsfieldAirSpin.setSingleStep(1.0)
+			self._set_compact_field(self.physicsHounsfieldAirSpin)
+			self.physicsAttenuationScaleSpin = QDoubleSpinBox()
+			self.physicsAttenuationScaleSpin.setRange(0.0, 1e6)
+			self.physicsAttenuationScaleSpin.setDecimals(6)
+			self.physicsAttenuationScaleSpin.setSingleStep(0.01)
+			self._set_compact_field(self.physicsAttenuationScaleSpin)
+			self.physicsSourceEnergySpin = QDoubleSpinBox()
+			self.physicsSourceEnergySpin.setRange(1.0, 1000.0)
+			self.physicsSourceEnergySpin.setDecimals(3)
+			self.physicsSourceEnergySpin.setSingleStep(1.0)
+			self._set_compact_field(self.physicsSourceEnergySpin)
+			self.physicsReferenceEnergySpin = QDoubleSpinBox()
+			self.physicsReferenceEnergySpin.setRange(1.0, 1000.0)
+			self.physicsReferenceEnergySpin.setDecimals(3)
+			self.physicsReferenceEnergySpin.setSingleStep(1.0)
+			self._set_compact_field(self.physicsReferenceEnergySpin)
+			self.physicsEnergyExponentSpin = QDoubleSpinBox()
+			self.physicsEnergyExponentSpin.setRange(0.0, 10.0)
+			self.physicsEnergyExponentSpin.setDecimals(3)
+			self.physicsEnergyExponentSpin.setSingleStep(0.1)
+			self._set_compact_field(self.physicsEnergyExponentSpin)
+			self.physicsOutputModeCombo = QComboBox()
+			self.physicsOutputModeCombo.addItems(["integral", "intensity"])
+			self._set_compact_field(self.physicsOutputModeCombo)
+			self.physicsIntensityFloorSpin = QDoubleSpinBox()
+			self.physicsIntensityFloorSpin.setRange(0.0, 1e6)
+			self.physicsIntensityFloorSpin.setDecimals(6)
+			self.physicsIntensityFloorSpin.setSingleStep(0.001)
+			self._set_compact_field(self.physicsIntensityFloorSpin)
+			self.physicsDistanceFalloffModeCombo = QComboBox()
+			self.physicsDistanceFalloffModeCombo.addItems(["none", "inverse_square"])
+			self._set_compact_field(self.physicsDistanceFalloffModeCombo)
+			self.physicsDistanceReferenceSpin = QDoubleSpinBox()
+			self.physicsDistanceReferenceSpin.setRange(0.0, 1e6)
+			self.physicsDistanceReferenceSpin.setDecimals(3)
+			self.physicsDistanceReferenceSpin.setSingleStep(1.0)
+			self._set_compact_field(self.physicsDistanceReferenceSpin)
+			self.physicsDistancePowerSpin = QDoubleSpinBox()
+			self.physicsDistancePowerSpin.setRange(0.0, 10.0)
+			self.physicsDistancePowerSpin.setDecimals(3)
+			self.physicsDistancePowerSpin.setSingleStep(0.1)
+			self._set_compact_field(self.physicsDistancePowerSpin)
+			advanced_physics_layout.addWidget(self._vcontrol("mu_air", self.physicsMuAirSpin))
+			advanced_physics_layout.addWidget(self._vcontrol("mu_water", self.physicsMuWaterSpin))
+			advanced_physics_layout.addWidget(self._vcontrol("hounsfield_air", self.physicsHounsfieldAirSpin))
+			advanced_physics_layout.addWidget(self._vcontrol("attenuation_scale", self.physicsAttenuationScaleSpin))
+			advanced_physics_layout.addWidget(self._vcontrol("source_energy_kev", self.physicsSourceEnergySpin))
+			advanced_physics_layout.addWidget(self._vcontrol("reference_energy_kev", self.physicsReferenceEnergySpin))
+			advanced_physics_layout.addWidget(self._vcontrol("energy_exponent", self.physicsEnergyExponentSpin))
+			advanced_physics_layout.addWidget(self._vcontrol("output_mode", self.physicsOutputModeCombo))
+			advanced_physics_layout.addWidget(self._vcontrol("intensity_floor", self.physicsIntensityFloorSpin))
+			advanced_physics_layout.addWidget(self._vcontrol("distance_falloff", self.physicsDistanceFalloffModeCombo))
+			advanced_physics_layout.addWidget(self._vcontrol("distance_ref [mm]", self.physicsDistanceReferenceSpin))
+			advanced_physics_layout.addWidget(self._vcontrol("distance_power", self.physicsDistancePowerSpin))
+			return advancedPhysicsGroup
+		
 		# ── Physics tab: Material filter + Advanced physics ────────────
 		physTab = QWidget()
 		physLayout = QVBoxLayout(physTab)
-		physLayout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+		physLayout.setAlignment(Qt.AlignTop)
 
-		physicsGroup = QGroupBox("Material filter")
-		self._set_compact_group(physicsGroup)
-		physics_layout = QFormLayout(physicsGroup)
-		self._configure_form_layout(physics_layout)
-		self.physicsMaterialWindowCenterSpin = QDoubleSpinBox()
-		self.physicsMaterialWindowCenterSpin.setRange(-1e6, 1e6)
-		self.physicsMaterialWindowCenterSpin.setDecimals(3)
-		self.physicsMaterialWindowCenterSpin.setSingleStep(1.0)
-		self._set_compact_field(self.physicsMaterialWindowCenterSpin)
-		self.physicsMaterialResponseModeCombo = QComboBox()
-		self.physicsMaterialResponseModeCombo.addItems(["linear", "piecewise_bone", "piecewise_soft_tissue", "bone_threshold"])
-		self._set_compact_field(self.physicsMaterialResponseModeCombo)
-		self.physicsBoneThresholdSpin = QDoubleSpinBox()
-		self.physicsBoneThresholdSpin.setRange(-1e6, 1e6)
-		self.physicsBoneThresholdSpin.setDecimals(3)
-		self.physicsBoneThresholdSpin.setSingleStep(1.0)
-		self._set_compact_field(self.physicsBoneThresholdSpin)
-		self.physicsBoneThresholdSoftnessSpin = QDoubleSpinBox()
-		self.physicsBoneThresholdSoftnessSpin.setRange(0.0, 1e6)
-		self.physicsBoneThresholdSoftnessSpin.setDecimals(3)
-		self.physicsBoneThresholdSoftnessSpin.setSingleStep(1.0)
-		self._set_compact_field(self.physicsBoneThresholdSoftnessSpin)
-		self.physicsMaterialWindowWidthSpin = QDoubleSpinBox()
-		self.physicsMaterialWindowWidthSpin.setRange(0.0, 1e6)
-		self.physicsMaterialWindowWidthSpin.setDecimals(3)
-		self.physicsMaterialWindowWidthSpin.setSingleStep(1.0)
-		self._set_compact_field(self.physicsMaterialWindowWidthSpin)
-		self.physicsMaterialWindowModeCombo = QComboBox()
-		self.physicsMaterialWindowModeCombo.addItems(["hard", "linear", "sigmoid"])
-		self._set_compact_field(self.physicsMaterialWindowModeCombo)
-		self.physicsMaterialWindowSoftnessSpin = QDoubleSpinBox()
-		self.physicsMaterialWindowSoftnessSpin.setRange(0.0, 1e6)
-		self.physicsMaterialWindowSoftnessSpin.setDecimals(3)
-		self.physicsMaterialWindowSoftnessSpin.setSingleStep(1.0)
-		self._set_compact_field(self.physicsMaterialWindowSoftnessSpin)
-		self.physicsAutoBoneButton = QPushButton("Auto bone threshold")
-		self.physicsAutoBoneButton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-		physics_layout.addRow("Response:", self.physicsMaterialResponseModeCombo)
-		physics_layout.addRow("Bone threshold [HU]:", self.physicsBoneThresholdSpin)
-		physics_layout.addRow("Bone softness [HU]:", self.physicsBoneThresholdSoftnessSpin)
-		physics_layout.addRow("Center [HU]:", self.physicsMaterialWindowCenterSpin)
-		physics_layout.addRow("Width [HU]:", self.physicsMaterialWindowWidthSpin)
-		physics_layout.addRow("Mode:", self.physicsMaterialWindowModeCombo)
-		physics_layout.addRow("Softness [HU]:", self.physicsMaterialWindowSoftnessSpin)
-		physics_layout.addRow("", self.physicsAutoBoneButton)
+		physicsGroup = _create_physicsGroup(self)
 		physLayout.addWidget(physicsGroup)
 
 		self.physicsAdvancedCheck = QCheckBox("Show advanced")
 		physLayout.addWidget(self.physicsAdvancedCheck)
 
-		self.advancedPhysicsGroup = QGroupBox("Advanced")
-		self._set_compact_group(self.advancedPhysicsGroup)
-		advanced_physics_layout = QFormLayout(self.advancedPhysicsGroup)
-		self._configure_form_layout(advanced_physics_layout)
-		self.physicsMuAirSpin = QDoubleSpinBox()
-		self.physicsMuAirSpin.setRange(-1e6, 1e6)
-		self.physicsMuAirSpin.setDecimals(6)
-		self.physicsMuAirSpin.setSingleStep(0.001)
-		self._set_compact_field(self.physicsMuAirSpin)
-		self.physicsMuWaterSpin = QDoubleSpinBox()
-		self.physicsMuWaterSpin.setRange(-1e6, 1e6)
-		self.physicsMuWaterSpin.setDecimals(6)
-		self.physicsMuWaterSpin.setSingleStep(0.001)
-		self._set_compact_field(self.physicsMuWaterSpin)
-		self.physicsHounsfieldAirSpin = QDoubleSpinBox()
-		self.physicsHounsfieldAirSpin.setRange(-1e6, 1e6)
-		self.physicsHounsfieldAirSpin.setDecimals(3)
-		self.physicsHounsfieldAirSpin.setSingleStep(1.0)
-		self._set_compact_field(self.physicsHounsfieldAirSpin)
-		self.physicsAttenuationScaleSpin = QDoubleSpinBox()
-		self.physicsAttenuationScaleSpin.setRange(0.0, 1e6)
-		self.physicsAttenuationScaleSpin.setDecimals(6)
-		self.physicsAttenuationScaleSpin.setSingleStep(0.01)
-		self._set_compact_field(self.physicsAttenuationScaleSpin)
-		self.physicsSourceEnergySpin = QDoubleSpinBox()
-		self.physicsSourceEnergySpin.setRange(1.0, 1000.0)
-		self.physicsSourceEnergySpin.setDecimals(3)
-		self.physicsSourceEnergySpin.setSingleStep(1.0)
-		self._set_compact_field(self.physicsSourceEnergySpin)
-		self.physicsReferenceEnergySpin = QDoubleSpinBox()
-		self.physicsReferenceEnergySpin.setRange(1.0, 1000.0)
-		self.physicsReferenceEnergySpin.setDecimals(3)
-		self.physicsReferenceEnergySpin.setSingleStep(1.0)
-		self._set_compact_field(self.physicsReferenceEnergySpin)
-		self.physicsEnergyExponentSpin = QDoubleSpinBox()
-		self.physicsEnergyExponentSpin.setRange(0.0, 10.0)
-		self.physicsEnergyExponentSpin.setDecimals(3)
-		self.physicsEnergyExponentSpin.setSingleStep(0.1)
-		self._set_compact_field(self.physicsEnergyExponentSpin)
-		self.physicsOutputModeCombo = QComboBox()
-		self.physicsOutputModeCombo.addItems(["integral", "intensity"])
-		self._set_compact_field(self.physicsOutputModeCombo)
-		self.physicsIntensityFloorSpin = QDoubleSpinBox()
-		self.physicsIntensityFloorSpin.setRange(0.0, 1e6)
-		self.physicsIntensityFloorSpin.setDecimals(6)
-		self.physicsIntensityFloorSpin.setSingleStep(0.001)
-		self._set_compact_field(self.physicsIntensityFloorSpin)
-		self.physicsDistanceFalloffModeCombo = QComboBox()
-		self.physicsDistanceFalloffModeCombo.addItems(["none", "inverse_square"])
-		self._set_compact_field(self.physicsDistanceFalloffModeCombo)
-		self.physicsDistanceReferenceSpin = QDoubleSpinBox()
-		self.physicsDistanceReferenceSpin.setRange(0.0, 1e6)
-		self.physicsDistanceReferenceSpin.setDecimals(3)
-		self.physicsDistanceReferenceSpin.setSingleStep(1.0)
-		self._set_compact_field(self.physicsDistanceReferenceSpin)
-		self.physicsDistancePowerSpin = QDoubleSpinBox()
-		self.physicsDistancePowerSpin.setRange(0.0, 10.0)
-		self.physicsDistancePowerSpin.setDecimals(3)
-		self.physicsDistancePowerSpin.setSingleStep(0.1)
-		self._set_compact_field(self.physicsDistancePowerSpin)
-		advanced_physics_layout.addRow("mu_air:", self.physicsMuAirSpin)
-		advanced_physics_layout.addRow("mu_water:", self.physicsMuWaterSpin)
-		advanced_physics_layout.addRow("hounsfield_air:", self.physicsHounsfieldAirSpin)
-		advanced_physics_layout.addRow("attenuation_scale:", self.physicsAttenuationScaleSpin)
-		advanced_physics_layout.addRow("source_energy_kev:", self.physicsSourceEnergySpin)
-		advanced_physics_layout.addRow("reference_energy_kev:", self.physicsReferenceEnergySpin)
-		advanced_physics_layout.addRow("energy_exponent:", self.physicsEnergyExponentSpin)
-		advanced_physics_layout.addRow("output_mode:", self.physicsOutputModeCombo)
-		advanced_physics_layout.addRow("intensity_floor:", self.physicsIntensityFloorSpin)
-		advanced_physics_layout.addRow("distance_falloff:", self.physicsDistanceFalloffModeCombo)
-		advanced_physics_layout.addRow("distance_ref [mm]:", self.physicsDistanceReferenceSpin)
-		advanced_physics_layout.addRow("distance_power:", self.physicsDistancePowerSpin)
+		self.advancedPhysicsGroup = _create_advancedPhysicsGroup(self)
 		self.advancedPhysicsGroup.setVisible(False)
+		physLayout.setAlignment(self.advancedPhysicsGroup, Qt.AlignTop)
 		physLayout.addWidget(self.advancedPhysicsGroup)
 
 		physLayout.addStretch(1)
-		self.tabs.addTab(physTab, "Physics")
+		return physTab
+	
 
-		# ── Presentation tab ───────────────────────────────────────────
+	def _create_run_tab(self):
 		# ── Run tab ────────────────────────────────────────────────────
 		runTab = QWidget()
 		runTabLayout = QVBoxLayout(runTab)
-		runTabLayout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+		runTabLayout.setAlignment(Qt.AlignTop)
+		runGroup, runGroupLayout = self._create_flow_group("Run")
 		motionFrameWidget = QWidget()
 		motionFrameWidget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
 		motionFrameLayout = QHBoxLayout(motionFrameWidget)
@@ -438,61 +462,86 @@ class PropVirtualXRay(PropWidget):
 		self.motionFrameModeCombo = QComboBox()
 		self.motionFrameModeCombo.addItem("Active frame", "active")
 		self.motionFrameModeCombo.addItem("All frames", "all")
+		self._set_compact_field(self.motionFrameModeCombo)
 		motionFrameLayout.addWidget(QLabel("Motion frames:"))
 		motionFrameLayout.addWidget(self.motionFrameModeCombo)
-		runTabLayout.addWidget(motionFrameWidget)
+		self._add_flow_control(runGroupLayout, "Motion frames", motionFrameWidget)
 		self.motionFrameInfoLabel = QLabel("For scenes without Motion this setting has no effect.")
 		self.motionFrameInfoLabel.setWordWrap(True)
-		runTabLayout.addWidget(self.motionFrameInfoLabel)
+		self.motionFrameInfoLabel.setMaximumWidth(320)
 
-		actionsWidget = QWidget()
-		actionsWidget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
-		actions_layout = FlowLayout(actionsWidget)
-		actions_layout.setContentsMargins(0, 0, 0, 0)
-		actions_layout.setSpacing(4)
 		self.refreshButton = QPushButton("Refresh")
-		self.runSimulationButton = QPushButton("Run Simulation")
-		self.updateDisplayButton = QPushButton("Update display")
-		self.openDetectorImageButton = QPushButton("Open Detector Image")
+		self.runSimulationButton = QPushButton("Run simulation")
+		self.updateDisplayButton = QPushButton("Update view")
+		self.openDetectorImageButton = QPushButton("Open detector")
 		self.cacheStageCombo = QComboBox()
-		self.cacheStageCombo.addItem("Raw detector", "raw")
-		self.cacheStageCombo.addItem("Line integral", "line_integral")
+		self.cacheStageCombo.addItem("Detector", "raw")
+		self.cacheStageCombo.addItem("Integral", "line_integral")
+		self._set_compact_field(self.cacheStageCombo)
+		self.cacheStageCombo.setMinimumContentsLength(8)
+		self.cacheStageCombo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
 		self.cacheFormatCombo = QComboBox()
-		self.cacheFormatCombo.addItem("Projection package (*.npz)", ".npz")
-		self.cacheFormatCombo.addItem("NumPy (*.npy)", ".npy")
-		self.cacheFormatCombo.addItem("Text (*.txt)", ".txt")
-		self.cacheFormatCombo.addItem("CSV (*.csv)", ".csv")
-		self.cacheFormatCombo.addItem("TSV (*.tsv)", ".tsv")
-		self.exportProjectionButton = QPushButton("Export projection")
-		self.importProjectionButton = QPushButton("Import projection")
-		self.exportSourcesButton = QPushButton("Export per-source")
+		self.cacheFormatCombo.addItem("Package", ".npz")
+		self.cacheFormatCombo.addItem("NumPy", ".npy")
+		self.cacheFormatCombo.addItem("Text", ".txt")
+		self.cacheFormatCombo.addItem("CSV", ".csv")
+		self.cacheFormatCombo.addItem("TSV", ".tsv")
+		self._set_compact_field(self.cacheFormatCombo)
+		self.cacheFormatCombo.setMinimumContentsLength(7)
+		self.cacheFormatCombo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+		self.cacheFormatCombo.setToolTip(
+			"Package (*.npz), NumPy (*.npy), Text (*.txt), CSV (*.csv), or TSV (*.tsv)."
+		)
+		self.exportProjectionButton = QPushButton("Export proj.")
+		self.importProjectionButton = QPushButton("Import proj.")
+		self.exportSourcesButton = QPushButton("Export sources")
+		for button in (
+			self.refreshButton,
+			self.runSimulationButton,
+			self.updateDisplayButton,
+			self.openDetectorImageButton,
+			self.exportProjectionButton,
+			self.importProjectionButton,
+			self.exportSourcesButton,
+		):
+			button.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
 		self.updateDisplayButton.setEnabled(False)
 		self.openDetectorImageButton.setEnabled(False)
 		self.renderInfoLabel = QLabel("")
 		self.renderInfoLabel.setWordWrap(True)
 		self.renderInfoLabel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-		actions_layout.addWidget(self.runSimulationButton)
-		actions_layout.addWidget(self.updateDisplayButton)
-		actions_layout.addWidget(self.openDetectorImageButton)
-		actions_layout.addWidget(self.refreshButton)
-		runTabLayout.addWidget(actionsWidget)
+		self._add_flow_control(runGroupLayout, "", self.runSimulationButton)
+		self._add_flow_control(runGroupLayout, "", self.updateDisplayButton)
+		self._add_flow_control(runGroupLayout, "", self.openDetectorImageButton)
+		self._add_flow_control(runGroupLayout, "", self.refreshButton)
 		self.presentationInfoLabel = QLabel(
 			"Presentation controls are handled by the generated DetectorImage object."
 		)
 		self.presentationInfoLabel.setWordWrap(True)
-		runTabLayout.addWidget(self.presentationInfoLabel)
-		cacheWidget = QWidget()
-		cacheWidget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
-		cacheLayout = QHBoxLayout(cacheWidget)
-		cacheLayout.setContentsMargins(0, 0, 0, 0)
-		cacheLayout.setSpacing(4)
-		cacheLayout.addWidget(QLabel("Cache:"))
-		cacheLayout.addWidget(self.cacheStageCombo)
-		cacheLayout.addWidget(self.cacheFormatCombo)
-		cacheLayout.addWidget(self.exportProjectionButton)
-		cacheLayout.addWidget(self.importProjectionButton)
-		cacheLayout.addWidget(self.exportSourcesButton)
-		runTabLayout.addWidget(cacheWidget)
+		self.presentationInfoLabel.setMaximumWidth(320)
+		self.presentationInfoLabel.setToolTip(
+			"Display parameters are edited on the generated DetectorImage object."
+		)
+		self._add_flow_control(runGroupLayout, "", self._wrap_flow_widget(self.motionFrameInfoLabel))
+		self._add_flow_control(runGroupLayout, "", self._wrap_flow_widget(self.presentationInfoLabel))
+		runTabLayout.addWidget(runGroup)
+		cacheGroup, cacheGroupLayout = self._create_flow_group("Cache")
+		self.cacheSelectorsWidget = QWidget()
+		self._set_compact_field(self.cacheSelectorsWidget)
+		cacheSelectorsLayout = FlowLayout(self.cacheSelectorsWidget, spacing=4)
+		cacheSelectorsLayout.setContentsMargins(0, 0, 0, 0)
+		cacheSelectorsLayout.addWidget(self.cacheStageCombo)
+		cacheSelectorsLayout.addWidget(self.cacheFormatCombo)
+		self.cacheActionsWidget = QWidget()
+		self._set_compact_field(self.cacheActionsWidget)
+		cacheActionsLayout = FlowLayout(self.cacheActionsWidget, spacing=4)
+		cacheActionsLayout.setContentsMargins(0, 0, 0, 0)
+		cacheActionsLayout.addWidget(self.exportProjectionButton)
+		cacheActionsLayout.addWidget(self.importProjectionButton)
+		cacheActionsLayout.addWidget(self.exportSourcesButton)
+		self._add_flow_control(cacheGroupLayout, "Data", self.cacheSelectorsWidget)
+		self._add_flow_control(cacheGroupLayout, "Actions", self.cacheActionsWidget)
+		runTabLayout.addWidget(cacheGroup)
 		self.progressBar = QProgressBar()
 		self.progressBar.setRange(0, 100)
 		self.progressBar.setValue(0)
@@ -500,8 +549,28 @@ class PropVirtualXRay(PropWidget):
 		runTabLayout.addWidget(self.progressBar)
 		runTabLayout.addWidget(self.renderInfoLabel)
 		runTabLayout.addStretch(1)
-		# self.tabs.addTab(runTab, "Run")
+		return runTab
 
+	def _setup_ui(self):
+		"""Create the full property form for detector, source and sampling parameters."""
+		layout = QVBoxLayout(self)
+		layout.setContentsMargins(0, 0, 0, 0)
+		layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+		self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+		self.tabs = QTabWidget()
+		self.tabs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+		# layout.addWidget(self.tabs)
+
+		# ── Geometry tab: Scene + Detector + Source + Sampling + Advanced source ──
+		geomTab = self._create_geom_tab()
+		self.tabs.addTab(geomTab, "Geometry")
+
+		# ── Physics tab: Material filter + Advanced physics ────────────
+		physTab = self._create_phys_tab()
+		self.tabs.addTab(physTab, "Physics")
+
+		runTab = self._create_run_tab()
 		layout.addWidget(runTab)
 		layout.addWidget(self.tabs)
 
@@ -521,7 +590,9 @@ class PropVirtualXRay(PropWidget):
 		sourcesTabLayout.setAlignment(Qt.AlignTop)
 
 		self._sourcesCombo = QComboBox()
-		self._sourcesCombo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+		self._sourcesCombo.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+		self._sourcesCombo.setMinimumContentsLength(16)
+		self._sourcesCombo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
 		sourcesTabLayout.addWidget(self._sourcesCombo)
 
 		scroll = QScrollArea()
@@ -534,10 +605,7 @@ class PropVirtualXRay(PropWidget):
 
 		self._sourcesCombo.currentIndexChanged.connect(self._sourcesStack.setCurrentIndex)
 
-		self._sources_tab_index = self.tabs.insertTab(
-			# self.tabs.count() - 1, sourcesTab, "Sources"
-			0, sourcesTab, "Sources"
-		)
+		self._sources_tab_index = self.tabs.insertTab(0, sourcesTab, "Sources")
 
 	def _rebuild_sources_tab(self, obj: VirtualXRay):
 		"""Rebuild per-source controls to match the current scene tree."""
@@ -571,7 +639,7 @@ class PropVirtualXRay(PropWidget):
 			lbl.setWordWrap(True)
 			pl_layout.addWidget(lbl)
 			self._sourcesStack.addWidget(placeholder)
-			self._sourcesCombo.addItem("—")
+			self._sourcesCombo.addItem("-")
 			self._sourcesCombo.blockSignals(False)
 			return
 
@@ -601,11 +669,7 @@ class PropVirtualXRay(PropWidget):
 		layout.setSpacing(6)
 
 		def _section(title):
-			box = QGroupBox(title)
-			self._set_compact_group(box)
-			form = QFormLayout(box)
-			self._configure_form_layout(form)
-			form.setContentsMargins(6, 6, 6, 6)
+			box, form = self._create_flow_group(title)
 			layout.addWidget(box)
 			return form
 
@@ -615,37 +679,41 @@ class PropVirtualXRay(PropWidget):
 
 		enabled_check = QCheckBox("Enabled")
 		enabled_check.setChecked(bool(source_obj.xray_source_enabled))
-		source_form.addRow("", enabled_check)
+		self._add_flow_control(source_form, "", enabled_check)
 
 		scale_spin = QDoubleSpinBox()
 		scale_spin.setRange(-1e3, 1e3)
 		scale_spin.setDecimals(6)
 		scale_spin.setSingleStep(0.05)
 		scale_spin.setValue(float(source_obj.xray_scalar_scale))
-		source_form.addRow("Scalar scale:", scale_spin)
+		self._set_compact_field(scale_spin)
+		self._add_flow_control(source_form, "Scalar scale", scale_spin)
 
 		bias_spin = QDoubleSpinBox()
 		bias_spin.setRange(-1e6, 1e6)
 		bias_spin.setDecimals(3)
 		bias_spin.setSingleStep(10.0)
 		bias_spin.setValue(float(source_obj.xray_scalar_bias))
-		source_form.addRow("Scalar bias:", bias_spin)
+		self._set_compact_field(bias_spin)
+		self._add_flow_control(source_form, "Scalar bias", bias_spin)
 
 		atten_spin = QDoubleSpinBox()
 		atten_spin.setRange(0.0, 1e6)
 		atten_spin.setDecimals(6)
 		atten_spin.setSingleStep(0.05)
 		atten_spin.setValue(float(source_obj.xray_attenuation_multiplier))
-		source_form.addRow("Attenuation x:", atten_spin)
+		self._set_compact_field(atten_spin)
+		self._add_flow_control(source_form, "Attenuation x", atten_spin)
 
 		material_override_check = QCheckBox("Use individual material response")
 		material_override_check.setChecked(bool(material_config.enabled))
-		material_form.addRow("", material_override_check)
+		self._add_flow_control(material_form, "", material_override_check)
 
 		material_response_combo = QComboBox()
 		material_response_combo.addItems(["linear", "piecewise_bone", "piecewise_soft_tissue", "bone_threshold"])
 		material_response_combo.setCurrentText(str(material_config.mode))
-		material_form.addRow("Response:", material_response_combo)
+		self._set_compact_field(material_response_combo)
+		self._add_flow_control(material_form, "Response", material_response_combo)
 
 		material_threshold_spin = QDoubleSpinBox()
 		material_threshold_spin.setRange(-1e6, 1e6)
@@ -655,14 +723,16 @@ class PropVirtualXRay(PropWidget):
 			0.0 if material_config.bone_threshold_hu is None
 			else float(material_config.bone_threshold_hu)
 		)
-		material_form.addRow("Bone threshold:", material_threshold_spin)
+		self._set_compact_field(material_threshold_spin)
+		self._add_flow_control(material_form, "Bone threshold", material_threshold_spin)
 
 		material_softness_spin = QDoubleSpinBox()
 		material_softness_spin.setRange(0.0, 1e6)
 		material_softness_spin.setDecimals(3)
 		material_softness_spin.setSingleStep(10.0)
 		material_softness_spin.setValue(float(material_config.bone_threshold_softness))
-		material_form.addRow("Threshold soft.:", material_softness_spin)
+		self._set_compact_field(material_softness_spin)
+		self._add_flow_control(material_form, "Threshold soft.", material_softness_spin)
 
 		material_window_center_spin = QDoubleSpinBox()
 		material_window_center_spin.setRange(-1e6, 1e6)
@@ -672,7 +742,8 @@ class PropVirtualXRay(PropWidget):
 			0.0 if material_config.window_center is None
 			else float(material_config.window_center)
 		)
-		material_form.addRow("Window center:", material_window_center_spin)
+		self._set_compact_field(material_window_center_spin)
+		self._add_flow_control(material_form, "Window center", material_window_center_spin)
 
 		material_window_width_spin = QDoubleSpinBox()
 		material_window_width_spin.setRange(0.0, 1e6)
@@ -682,19 +753,22 @@ class PropVirtualXRay(PropWidget):
 			0.0 if material_config.window_width is None
 			else float(material_config.window_width)
 		)
-		material_form.addRow("Window width:", material_window_width_spin)
+		self._set_compact_field(material_window_width_spin)
+		self._add_flow_control(material_form, "Window width", material_window_width_spin)
 
 		material_window_mode_combo = QComboBox()
 		material_window_mode_combo.addItems(["hard", "linear", "sigmoid"])
 		material_window_mode_combo.setCurrentText(str(material_config.window_mode))
-		material_form.addRow("Window mode:", material_window_mode_combo)
+		self._set_compact_field(material_window_mode_combo)
+		self._add_flow_control(material_form, "Window mode", material_window_mode_combo)
 
 		material_window_softness_spin = QDoubleSpinBox()
 		material_window_softness_spin.setRange(0.0, 1e6)
 		material_window_softness_spin.setDecimals(3)
 		material_window_softness_spin.setSingleStep(10.0)
 		material_window_softness_spin.setValue(float(material_config.window_softness))
-		material_form.addRow("Window soft.:", material_window_softness_spin)
+		self._set_compact_field(material_window_softness_spin)
+		self._add_flow_control(material_form, "Window soft.", material_window_softness_spin)
 
 		def _update_material_override_widgets():
 			override_enabled = bool(material_override_check.isChecked())
@@ -717,7 +791,8 @@ class PropVirtualXRay(PropWidget):
 			interp_combo = QComboBox()
 			interp_combo.addItems(["default", "nearest", "linear", "cubic"])
 			interp_combo.setCurrentText(str(source_obj.xray_interpolation_override))
-			type_form.addRow("Interpolation:", interp_combo)
+			self._set_compact_field(interp_combo)
+			self._add_flow_control(type_form, "Interpolation", interp_combo)
 
 			backend_combo = QComboBox()
 			backend_combo.addItems(["sampling", "siddon"])
@@ -726,11 +801,12 @@ class PropVirtualXRay(PropWidget):
 				"siddon  – exact voxel traversal (chord-length, step_mm independent)"
 			)
 			backend_combo.setCurrentText(str(getattr(source_obj, "xray_volume_backend", "sampling")))
-			type_form.addRow("Backend:", backend_combo)
+			self._set_compact_field(backend_combo)
+			self._add_flow_control(type_form, "Backend", backend_combo)
 
 			fill_check = QCheckBox("Use explicit fill value")
 			fill_check.setChecked(bool(source_obj.xray_fill_value_override_enabled))
-			type_form.addRow("", fill_check)
+			self._add_flow_control(type_form, "", fill_check)
 
 			fill_spin = QDoubleSpinBox()
 			fill_spin.setRange(-1e9, 1e9)
@@ -738,7 +814,8 @@ class PropVirtualXRay(PropWidget):
 			fill_spin.setSingleStep(10.0)
 			fill_spin.setValue(float(source_obj.xray_fill_value_override))
 			fill_spin.setEnabled(bool(source_obj.xray_fill_value_override_enabled))
-			type_form.addRow("Fill value:", fill_spin)
+			self._set_compact_field(fill_spin)
+			self._add_flow_control(type_form, "Fill value", fill_spin)
 
 			def _on_vol_changed(
 				_ref=src_ref, _en=enabled_check, _sc=scale_spin, _bi=bias_spin,
@@ -794,19 +871,22 @@ class PropVirtualXRay(PropWidget):
 			backend_combo = QComboBox()
 			backend_combo.addItems(["analytic_bvh", "projected_intersection_list"])
 			backend_combo.setCurrentText(str(getattr(source_obj, "xray_mesh_backend", "analytic_bvh")))
-			type_form.addRow("Backend:", backend_combo)
+			self._set_compact_field(backend_combo)
+			self._add_flow_control(type_form, "Backend", backend_combo)
 
 			mode_combo = QComboBox()
 			mode_combo.addItems(["solid", "shell"])
 			mode_combo.setCurrentText(str(source_obj.xray_mesh_mode))
-			type_form.addRow("Mode:", mode_combo)
+			self._set_compact_field(mode_combo)
+			self._add_flow_control(type_form, "Mode", mode_combo)
 
 			scalar_val_spin = QDoubleSpinBox()
 			scalar_val_spin.setRange(-1e6, 1e6)
 			scalar_val_spin.setDecimals(3)
 			scalar_val_spin.setSingleStep(10.0)
 			scalar_val_spin.setValue(float(source_obj.xray_mesh_scalar_value))
-			type_form.addRow("Scalar value:", scalar_val_spin)
+			self._set_compact_field(scalar_val_spin)
+			self._add_flow_control(type_form, "Scalar value", scalar_val_spin)
 
 			shell_spin = QDoubleSpinBox()
 			shell_spin.setRange(0.001, 1e6)
@@ -814,7 +894,8 @@ class PropVirtualXRay(PropWidget):
 			shell_spin.setSingleStep(0.1)
 			shell_spin.setValue(float(source_obj.xray_mesh_shell_thickness_mm))
 			shell_spin.setEnabled(str(source_obj.xray_mesh_mode).lower() == "shell")
-			type_form.addRow("Shell [mm]:", shell_spin)
+			self._set_compact_field(shell_spin)
+			self._add_flow_control(type_form, "Shell [mm]", shell_spin)
 
 			def _on_mesh_changed(
 				_ref=src_ref, _en=enabled_check, _sc=scale_spin, _bi=bias_spin,
@@ -878,13 +959,143 @@ class PropVirtualXRay(PropWidget):
 		layout.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
 		layout.setRowWrapPolicy(QFormLayout.DontWrapRows)
 
+	def _create_flow_group(self, title):
+		"""Create one width-aware group box with wrapping controls."""
+		group = _FlowGroupBox(title)
+		group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+		layout = FlowLayout(group)
+		layout.setContentsMargins(6, 6, 6, 6)
+		layout.setSpacing(4)
+		layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+		return group, layout
+
+	def _create_collapsible_flow_group(self, title, collapsed=True):
+		"""Create one collapsible section whose body uses a wrapping flow layout."""
+		group = _CollapsibleGroup(title, collapsed=collapsed)
+		layout = FlowLayout(group.body())
+		layout.setContentsMargins(6, 6, 6, 6)
+		layout.setSpacing(4)
+		layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+		return group, layout
+
+	def _wrap_flow_widget(self, control):
+		"""Wrap one standalone control so it behaves like a flow item."""
+		widget = QWidget()
+		widget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+		layout = QVBoxLayout(widget)
+		layout.setContentsMargins(6, 6, 6, 6)
+		layout.setSpacing(4)
+		layout.addWidget(control)
+		return widget
+
+	def _vcontrol(self, label_text, control):
+		"""Return one labeled control block suitable for flow-based groups."""
+		widget = QWidget()
+		widget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+		layout = QVBoxLayout()
+		layout.setContentsMargins(6, 6, 6, 6)
+		layout.setSpacing(4)
+		widget.setLayout(layout)
+		label = QLabel(f"{label_text}:")
+		label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+		layout.addWidget(label)
+		layout.addWidget(control)
+		return widget
+
+	def _add_flow_control(self, layout, label_text, control):
+		"""Add one wrapped control to a flow layout, with or without label."""
+		if label_text:
+			layout.addWidget(self._vcontrol(label_text, control))
+		else:
+			layout.addWidget(self._wrap_flow_widget(control))
+
+	def _add_labeled_control(self, layout, label_text, control):
+		"""Add one compact 'label over control' block to a vertical layout."""
+		label = QLabel(f"{label_text}:")
+		label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+		layout.addWidget(label)
+		layout.addWidget(control)
+
 	def _set_compact_field(self, widget):
 		"""Prefer size-hint width for editor widgets used inside form layouts."""
 		widget.setSizePolicy(QSizePolicy.Maximum, widget.sizePolicy().verticalPolicy())
 
 	def _set_compact_group(self, group):
 		"""Keep group boxes content-sized instead of letting them dictate full tab width."""
-		group.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+		group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+	def _width_debug_label(self, widget):
+		"""Return one compact widget label for width-constraint diagnostics."""
+		text = ""
+		for attr_name in ("text", "windowTitle", "title", "currentText"):
+			attr = getattr(widget, attr_name, None)
+			if callable(attr):
+				try:
+					text = str(attr() or "").strip()
+				except Exception:
+					text = ""
+			if text:
+				break
+		text = text.replace("\n", " ")
+		if len(text) > 40:
+			text = text[:37] + "..."
+		return f"{widget.__class__.__name__}('{text}')" if text else widget.__class__.__name__
+
+	def _set_render_info_text(self, text):
+		"""Keep status text readable without letting it dominate the dock width."""
+		full_text = str(text)
+		short_text = full_text
+		if len(short_text) > 72:
+			short_text = short_text[:69].rstrip() + "..."
+		self.renderInfoLabel.setText(short_text)
+		self.renderInfoLabel.setToolTip(full_text)
+
+	def _maybe_report_width_constraints(self):
+		"""Log the widest size hints in this panel when width debugging is enabled."""
+		debug_flag = os.environ.get("DPVISION_DEBUG_PROP_WIDTHS", "").strip().lower()
+		if debug_flag not in {"1", "true", "yes", "on"}:
+			return
+		candidates = []
+		for widget in [self] + self.findChildren(QWidget):
+			if not widget.isVisible():
+				continue
+			size_hint_width = widget.sizeHint().width()
+			minimum_hint_width = widget.minimumSizeHint().width()
+			minimum_width = widget.minimumWidth()
+			policy = widget.sizePolicy().horizontalPolicy()
+			candidates.append({
+				"widget": widget,
+				"label": self._width_debug_label(widget),
+				"size_hint": int(size_hint_width),
+				"minimum_hint": int(minimum_hint_width),
+				"minimum_width": int(minimum_width),
+				"policy": int(policy),
+			})
+		candidates.sort(
+			key=lambda item: (
+				item["minimum_hint"],
+				item["size_hint"],
+				item["minimum_width"],
+			),
+			reverse=True,
+		)
+		_log.warning("PropVirtualXRay width audit: top contributors")
+		for item in candidates[:20]:
+			_log.warning(
+				"  minHint=%s sizeHint=%s minWidth=%s policy=%s %s",
+				item["minimum_hint"],
+				item["size_hint"],
+				item["minimum_width"],
+				item["policy"],
+				item["label"],
+			)
+
+	def _set_advanced_physics_visible(self, visible):
+		"""Toggle advanced physics and refresh wrapped geometry in the dock."""
+		self.advancedPhysicsGroup.setVisible(visible)
+		self.advancedPhysicsGroup.updateGeometry()
+		self.tabs.updateGeometry()
+		self.updateGeometry()
 
 	def _connect_signals(self):
 		"""Connect all editor widgets to their slots."""
@@ -936,7 +1147,7 @@ class PropVirtualXRay(PropWidget):
 		self.sourceFillValueSpin.valueChanged.connect(self.on_advanced_source_changed)
 		self.motionFrameModeCombo.currentIndexChanged.connect(self.on_motion_frame_mode_changed)
 		self.geometryAdvancedCheck.toggled.connect(lambda checked: self.advancedSourceGroup.setVisible(checked))
-		self.physicsAdvancedCheck.toggled.connect(lambda checked: self.advancedPhysicsGroup.setVisible(checked))
+		self.physicsAdvancedCheck.toggled.connect(self._set_advanced_physics_visible)
 		self.refreshButton.clicked.connect(self.on_refresh_requested)
 		self.runSimulationButton.clicked.connect(self.on_run_simulation)
 		self.updateDisplayButton.clicked.connect(self.on_update_display)
@@ -1099,7 +1310,7 @@ class PropVirtualXRay(PropWidget):
 		motion_frame_mode_index = self.motionFrameModeCombo.findData(motion_frame_mode)
 		self.motionFrameModeCombo.setCurrentIndex(0 if motion_frame_mode_index < 0 else motion_frame_mode_index)
 		self.volumesLabel.setText(str(len(obj.collect_xray_objects())))
-		self.renderInfoLabel.setText(obj.info())
+		self._set_render_info_text(obj.info())
 		self.updateDisplayButton.setEnabled(obj.last_raw_projection is not None)
 		self.openDetectorImageButton.setEnabled(isinstance(getattr(obj, "last_projection_image", None), DetectorImage))
 		self.exportProjectionButton.setEnabled(obj.last_raw_projection is not None or getattr(obj, "last_line_integral_projection", None) is not None)
@@ -1110,6 +1321,7 @@ class PropVirtualXRay(PropWidget):
 		self._update_advanced_source_visibility(obj)
 		self._rebuild_sources_tab(obj)
 		self.blockAll(False)
+		self._maybe_report_width_constraints()
 
 	def _after_change(self, obj: VirtualXRay):
 		"""Refresh dependent state after changing one property."""
@@ -1302,7 +1514,7 @@ class PropVirtualXRay(PropWidget):
 			QMessageBox.critical(self, "Auto bone estimation error", str(exc))
 			return
 		self._after_change(obj)
-		self.renderInfoLabel.setText(
+		self._set_render_info_text(
 			f"{obj.info()}\nAuto bone threshold: T={estimate['threshold']:.0f} HU"
 		)
 
@@ -1311,7 +1523,7 @@ class PropVirtualXRay(PropWidget):
 	def on_refresh_requested(self):
 		"""Refresh the source count and textual scene summary."""
 		obj = self.obj_ref()
-		self.renderInfoLabel.setText(obj.info())
+		self._set_render_info_text(obj.info())
 		self.volumesLabel.setText(str(len(obj.collect_xray_objects())))
 
 	@pyqtSlot()
@@ -1468,7 +1680,7 @@ class PropVirtualXRay(PropWidget):
 			self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
 			projected_annotations = getattr(getattr(obj, "last_projected_annotations", None), "items", [])
 			projected_on_detector = len([item for item in projected_annotations if item.in_bounds])
-			self.renderInfoLabel.setText(
+			self._set_render_info_text(
 				f"{stats.elapsed_seconds:.2f}s, traced={stats.traced_pixels}, "
 				f"avgS={stats.average_samples_per_traced_pixel:.1f}, ann={projected_on_detector}"
 			)
@@ -1534,7 +1746,9 @@ class PropVirtualXRay(PropWidget):
 		except Exception as exc:
 			QMessageBox.critical(self, "Projection export error", str(exc))
 			return
-		self.renderInfoLabel.setText(f"{obj.info()}\nExported {self._cache_stage_label(stage)} projection to:\n{file_path}")
+		self._set_render_info_text(
+			f"{obj.info()}\nExported {self._cache_stage_label(stage)} projection to:\n{file_path}"
+		)
 
 	@pyqtSlot()
 	def on_import_projection_requested(self):
@@ -1565,7 +1779,9 @@ class PropVirtualXRay(PropWidget):
 			self.openDetectorImageButton.setEnabled(isinstance(getattr(obj, "last_projection_image", None), DetectorImage))
 			self.exportProjectionButton.setEnabled(obj.last_raw_projection is not None or getattr(obj, "last_line_integral_projection", None) is not None)
 			self.exportSourcesButton.setEnabled(bool(getattr(obj, "last_source_projections", [])))
-			self.renderInfoLabel.setText(f"{obj.info()}\nImported {self._cache_stage_label(stage)} projection from:\n{file_path}")
+			self._set_render_info_text(
+				f"{obj.info()}\nImported {self._cache_stage_label(stage)} projection from:\n{file_path}"
+			)
 		finally:
 			QApplication.restoreOverrideCursor()
 			for viewer in gl_viewers:
@@ -1598,6 +1814,6 @@ class PropVirtualXRay(PropWidget):
 		except Exception as exc:
 			QMessageBox.critical(self, "Per-source export error", str(exc))
 			return
-		self.renderInfoLabel.setText(
+		self._set_render_info_text(
 			f"{obj.info()}\nExported {len(exported_paths)} per-source {self._cache_stage_label(stage)} projections to:\n{directory}"
 		)
