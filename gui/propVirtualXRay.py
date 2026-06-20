@@ -42,91 +42,12 @@ from dpVision.gui.propWidget import PropWidget
 from ..virtualXRay import VirtualXRay
 from ..detectorImage import DetectorImage
 from .detectorImageViewer import DetectorImageViewerChild
+from .flowPanel import FlowGroupBox as _FlowGroupBox
+from .flowPanel import FlowPanelMixin
 from ..xray.xraySource import get_xray_material_response_config, set_xray_material_response_config
 from ..xray.xraySource import ensure_xray_source_config
 
-class _CollapsibleGroup(QWidget):
-	"""Simple collapsible section: a toggle button + a hidden/shown body widget."""
-
-	def __init__(self, title, collapsed=True, parent=None):
-		"""Create one collapsible group with a body that participates in relayout."""
-		super().__init__(parent)
-		self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-		outer = QVBoxLayout(self)
-		outer.setContentsMargins(0, 2, 0, 2)
-		outer.setSpacing(0)
-		outer.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-
-		self._title = title
-		self._btn = QPushButton()
-		self._btn.setCheckable(True)
-		self._btn.setChecked(not collapsed)
-		self._btn.setFlat(True)
-		self._btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-		self._btn.setStyleSheet(
-			"QPushButton { text-align: left; padding: 3px 6px; font-weight: bold; }"
-		)
-		self._update_text(not collapsed)
-		self._btn.setMaximumWidth(self._btn.sizeHint().width())
-		outer.addWidget(self._btn)
-
-		self._body = QWidget()
-		self._body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-		self._body.setVisible(not collapsed)
-		outer.addWidget(self._body)
-
-		self._btn.toggled.connect(self._on_toggle)
-
-	def _update_text(self, expanded):
-		self._btn.setText(("▼  " if expanded else "▶  ") + self._title)
-		self._btn.setMaximumWidth(self._btn.sizeHint().width())
-
-	def _on_toggle(self, checked):
-		"""Show or hide the body and notify parent layouts about the new size hint."""
-		self._update_text(checked)
-		self._body.setVisible(checked)
-		self.updateGeometry()
-		parent = self.parentWidget()
-		while parent is not None:
-			parent.updateGeometry()
-			parent = parent.parentWidget()
-
-	def body(self):
-		"""Return the inner widget to which a content layout should be assigned."""
-		return self._body
-
-
-class _FlowGroupBox(QGroupBox):
-	"""Group box that forwards height-for-width to its wrapping child layout."""
-
-	def hasHeightForWidth(self):
-		"""Report height-for-width when the installed layout supports it."""
-		layout = self.layout()
-		return bool(layout is not None and layout.hasHeightForWidth())
-
-	def heightForWidth(self, width):
-		"""Return the group height needed for the given content width."""
-		layout = self.layout()
-		if layout is None or not layout.hasHeightForWidth():
-			return super().heightForWidth(width)
-		return layout.totalHeightForWidth(max(0, width))
-
-	def minimumSizeHint(self):
-		"""Keep the minimum size consistent with the flow layout's wrapped content."""
-		layout = self.layout()
-		if layout is None:
-			return super().minimumSizeHint()
-		return layout.minimumSize()
-
-	def sizeHint(self):
-		"""Prefer the current width and let the height follow the wrapped content."""
-		size_hint = super().sizeHint()
-		if self.hasHeightForWidth():
-			size_hint.setHeight(self.heightForWidth(size_hint.width()))
-		return size_hint
-
-
-class PropVirtualXRay(PropWidget):
+class PropVirtualXRay(FlowPanelMixin, PropWidget):
 	"""Edit basic source and detector parameters of one `VirtualXRay` scene node."""
 
 	def __init__(self, _obj: VirtualXRay, parent=None):
@@ -959,70 +880,12 @@ class PropVirtualXRay(PropWidget):
 		layout.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
 		layout.setRowWrapPolicy(QFormLayout.DontWrapRows)
 
-	def _create_flow_group(self, title):
-		"""Create one width-aware group box with wrapping controls."""
-		group = _FlowGroupBox(title)
-		group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-		layout = FlowLayout(group)
-		layout.setContentsMargins(6, 6, 6, 6)
-		layout.setSpacing(4)
-		layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-		return group, layout
-
-	def _create_collapsible_flow_group(self, title, collapsed=True):
-		"""Create one collapsible section whose body uses a wrapping flow layout."""
-		group = _CollapsibleGroup(title, collapsed=collapsed)
-		layout = FlowLayout(group.body())
-		layout.setContentsMargins(6, 6, 6, 6)
-		layout.setSpacing(4)
-		layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-		return group, layout
-
-	def _wrap_flow_widget(self, control):
-		"""Wrap one standalone control so it behaves like a flow item."""
-		widget = QWidget()
-		widget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
-		layout = QVBoxLayout(widget)
-		layout.setContentsMargins(6, 6, 6, 6)
-		layout.setSpacing(4)
-		layout.addWidget(control)
-		return widget
-
-	def _vcontrol(self, label_text, control):
-		"""Return one labeled control block suitable for flow-based groups."""
-		widget = QWidget()
-		widget.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
-		layout = QVBoxLayout()
-		layout.setContentsMargins(6, 6, 6, 6)
-		layout.setSpacing(4)
-		widget.setLayout(layout)
-		label = QLabel(f"{label_text}:")
-		label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
-		layout.addWidget(label)
-		layout.addWidget(control)
-		return widget
-
-	def _add_flow_control(self, layout, label_text, control):
-		"""Add one wrapped control to a flow layout, with or without label."""
-		if label_text:
-			layout.addWidget(self._vcontrol(label_text, control))
-		else:
-			layout.addWidget(self._wrap_flow_widget(control))
-
 	def _add_labeled_control(self, layout, label_text, control):
 		"""Add one compact 'label over control' block to a vertical layout."""
 		label = QLabel(f"{label_text}:")
 		label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
 		layout.addWidget(label)
 		layout.addWidget(control)
-
-	def _set_compact_field(self, widget):
-		"""Prefer size-hint width for editor widgets used inside form layouts."""
-		widget.setSizePolicy(QSizePolicy.Maximum, widget.sizePolicy().verticalPolicy())
-
-	def _set_compact_group(self, group):
-		"""Keep group boxes content-sized instead of letting them dictate full tab width."""
-		group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
 	def _width_debug_label(self, widget):
 		"""Return one compact widget label for width-constraint diagnostics."""

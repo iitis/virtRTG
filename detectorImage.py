@@ -425,6 +425,32 @@ class DetectorImage(Object):
 		"""Return one compact human-readable summary of the transfer curve."""
 		return " | ".join(f"{x_value:.1f}->{y_value:.1f}" for x_value, y_value in self.transfer_points_pct)
 
+	def transfer_curve_preview_data(self, histogram_bins=64, ignore_zero_values=True):
+		"""Return normalized histogram and control points for transfer-curve preview widgets."""
+		bin_count = max(8, int(histogram_bins))
+		presented = np.asarray(self.get_presented_array(), dtype=np.float32)
+		finite_values = presented[np.isfinite(presented)]
+		if finite_values.size == 0:
+			histogram = np.zeros(bin_count, dtype=np.float32)
+		else:
+			finite_values = np.clip(finite_values, 0.0, 1.0)
+			if bool(ignore_zero_values):
+				non_zero_values = finite_values[finite_values > 0.0]
+				if non_zero_values.size > 0:
+					finite_values = non_zero_values
+			histogram, _edges = np.histogram(finite_values, bins=bin_count, range=(0.0, 1.0))
+			histogram = np.asarray(histogram, dtype=np.float32)
+			histogram_max = float(np.max(histogram))
+			if histogram_max > 0.0:
+				histogram = histogram / histogram_max
+		x_values = np.asarray([point[0] for point in self.transfer_points_pct], dtype=np.float32) / 100.0
+		y_values = np.asarray([point[1] for point in self.transfer_points_pct], dtype=np.float32) / 100.0
+		return {
+			"histogram": histogram,
+			"curve_x": np.clip(x_values, 0.0, 1.0),
+			"curve_y": np.clip(y_values, 0.0, 1.0),
+		}
+
 	def get_display_array(self):
 		"""Return the current detector image mapped into the `[0, 1]` display range."""
 		if self.raw_array is None:

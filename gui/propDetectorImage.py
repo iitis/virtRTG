@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import weakref
 
-from PyQt5.QtCore import Qt, pyqtSlot
-from PyQt5.QtGui import QColor, QPixmap
+import numpy as np
+
+from PyQt5.QtCore import QPointF, QRectF, QSize, Qt, pyqtSlot
+from PyQt5.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PyQt5.QtWidgets import (
 	QCheckBox,
 	QColorDialog,
@@ -29,7 +31,6 @@ from PyQt5.QtWidgets import (
 )
 
 from dpVision import AP
-from dpVision.gui.flowLayout import FlowLayout
 from dpVision.gui.propBaseObject import PropBaseObject
 from dpVision.gui.propWidget import PropWidget
 
@@ -40,6 +41,7 @@ from ..xray.xrayAnnotationOverlay import (
 	XRayOverlayStyle,
 )
 from .detectorImageViewer import DetectorImageViewerChild
+from .flowPanel import FlowPanelMixin
 
 
 class _CurvePointRow(QFrame):
@@ -106,6 +108,119 @@ class _CurvePointRow(QFrame):
 		self._on_value_changed()
 
 
+class _TransferCurvePreviewWidget(QWidget):
+	"""Paint one compact preview of the transfer curve and its input histogram."""
+
+	def __init__(self, detector_image, dialog, parent=None):
+		"""Bind the preview widget to one detector image and its dialog controller."""
+		super().__init__(parent)
+		self.detector_image = detector_image
+		self.dialog = dialog
+		self.setMinimumSize(240, 220)
+		self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+	def sizeHint(self):
+		"""Return a stable default size for dock- and dialog-friendly layouts."""
+		return QSize(280, 260)
+
+	def _plot_rect(self):
+		"""Return the inner plot rectangle used by the preview painter."""
+		margins = (16.0, 12.0, 14.0, 22.0)
+		return QRectF(
+			margins[0],
+			margins[1],
+			max(40.0, float(self.width()) - margins[0] - margins[2]),
+			max(40.0, float(self.height()) - margins[1] - margins[3]),
+		)
+
+	def _map_plot_point(self, plot_rect, x_value, y_value):
+		"""Map one normalized `(x, y)` point into widget coordinates."""
+		return QPointF(
+			plot_rect.left() + float(x_value) * plot_rect.width(),
+			plot_rect.bottom() - float(y_value) * plot_rect.height(),
+		)
+
+	def paintEvent(self, event):
+		"""Render the transfer-curve histogram and the piecewise-linear curve."""
+		super().paintEvent(event)
+		painter = QPainter(self)
+		try:
+			painter.setRenderHint(QPainter.Antialiasing, True)
+			painter.fillRect(self.rect(), self.palette().window())
+
+			plot_rect = self._plot_rect()
+			painter.fillRect(plot_rect, QColor(248, 248, 248))
+			painter.setPen(QPen(QColor(210, 210, 210), 1))
+			for fraction in (0.25, 0.5, 0.75):
+				x_coord = plot_rect.left() + fraction * plot_rect.width()
+				y_coord = plot_rect.top() + fraction * plot_rect.height()
+				painter.drawLine(QPointF(x_coord, plot_rect.top()), QPointF(x_coord, plot_rect.bottom()))
+				painter.drawLine(QPointF(plot_rect.left(), y_coord), QPointF(plot_rect.right(), y_coord))
+			painter.setPen(QPen(QColor(160, 160, 160), 1))
+			painter.drawRect(plot_rect)
+
+			preview_data = self.detector_image.transfer_curve_preview_data(
+				histogram_bins=100,
+				ignore_zero_values=self.dialog.ignoreZerosCheck.isChecked(),
+			)
+			histogram = preview_data["histogram"]
+			if histogram.size > 0:
+				painter.save()
+				painter.setRenderHint(QPainter.Antialiasing, False)
+				painter.setPen(Qt.NoPen)
+				painter.setBrush(QColor(150, 150, 150, 90))
+				bin_edges = np.linspace(plot_rect.left(), plot_rect.right(), histogram.size + 1, dtype=np.float32)
+				for bar_index, value in enumerate(histogram):
+					bar_height = float(np.clip(value, 0.0, 1.0)) * plot_rect.height()
+					left = float(bin_edges[bar_index])
+					right = float(bin_edges[bar_index + 1])
+					bar_rect = QRectF(
+						left,
+						plot_rect.bottom() - bar_height,
+						max(1.0, right - left),
+						bar_height,
+					)
+					painter.drawRect(bar_rect)
+				painter.restore()
+
+			painter.setPen(QPen(QColor(180, 180, 180), 1, Qt.DashLine))
+			painter.drawLine(
+				self._map_plot_point(plot_rect, 0.0, 0.0),
+				self._map_plot_point(plot_rect, 1.0, 1.0),
+			)
+
+			curve_x = preview_data["curve_x"]
+			curve_y = preview_data["curve_y"]
+			if curve_x.size >= 2 and curve_y.size >= 2:
+				path = QPainterPath(self._map_plot_point(plot_rect, curve_x[0], curve_y[0]))
+				for x_value, y_value in zip(curve_x[1:], curve_y[1:]):
+					path.lineTo(self._map_plot_point(plot_rect, x_value, y_value))
+				painter.setPen(QPen(QColor(44, 112, 201), 2))
+				painter.setBrush(Qt.NoBrush)
+				painter.drawPath(path)
+
+			active_index = int(getattr(self.dialog, "active_index", -1))
+			for point_index, (x_value, y_value) in enumerate(zip(curve_x, curve_y)):
+				point = self._map_plot_point(plot_rect, x_value, y_value)
+				if point_index == active_index:
+					painter.setPen(QPen(QColor(44, 112, 201), 2))
+					painter.setBrush(QColor(255, 255, 255))
+					painter.drawEllipse(point, 5.5, 5.5)
+				painter.setPen(QPen(QColor(44, 112, 201), 1))
+				painter.setBrush(QColor(44, 112, 201))
+				painter.drawEllipse(point, 3.0, 3.0)
+
+			painter.setPen(QPen(QColor(90, 90, 90), 1))
+			painter.drawText(QRectF(plot_rect.left(), plot_rect.bottom() + 4.0, plot_rect.width(), 16.0), "input 0% ... 100%")
+			painter.save()
+			painter.translate(4.0, plot_rect.bottom())
+			painter.rotate(-90.0)
+			painter.drawText(QRectF(0.0, 0.0, plot_rect.height(), 16.0), "output 0% ... 100%")
+			painter.restore()
+		finally:
+			painter.end()
+
+
 class TransferCurveDialog(QDialog):
 	"""Simple transfer-curve editor using percent input/output control points."""
 
@@ -118,18 +233,39 @@ class TransferCurveDialog(QDialog):
 		self.active_index = 0
 		self._rebuilding = False
 		self.setWindowTitle(f"Transfer Curve: {detector_image.label}")
-		self.resize(320, 360)
+		self.resize(680, 380)
 
 		layout = QVBoxLayout(self)
 		self.scopeLabel = QLabel("")
 		self.scopeLabel.setWordWrap(True)
 		layout.addWidget(self.scopeLabel)
 
+		self.ignoreZerosCheck = QCheckBox("Ignore zeros in histogram")
+		self.ignoreZerosCheck.setChecked(True)
+		layout.addWidget(self.ignoreZerosCheck)
+
+		body = QWidget()
+		body_layout = QHBoxLayout(body)
+		body_layout.setContentsMargins(0, 0, 0, 0)
+		body_layout.setSpacing(12)
+		layout.addWidget(body, 1)
+
 		self.rowsHost = QWidget()
 		self.rowsLayout = QVBoxLayout(self.rowsHost)
 		self.rowsLayout.setContentsMargins(0, 0, 0, 0)
 		self.rowsLayout.setSpacing(4)
-		layout.addWidget(self.rowsHost)
+		body_layout.addWidget(self.rowsHost, 0)
+
+		preview_host = QWidget()
+		preview_layout = QVBoxLayout(preview_host)
+		preview_layout.setContentsMargins(0, 0, 0, 0)
+		preview_layout.setSpacing(4)
+		self.previewTitleLabel = QLabel("Curve preview with input histogram")
+		self.previewTitleLabel.setWordWrap(True)
+		self.previewWidget = _TransferCurvePreviewWidget(detector_image, self, parent=preview_host)
+		preview_layout.addWidget(self.previewTitleLabel)
+		preview_layout.addWidget(self.previewWidget, 1)
+		body_layout.addWidget(preview_host, 1)
 
 		button_row = QWidget()
 		button_layout = QHBoxLayout(button_row)
@@ -146,6 +282,7 @@ class TransferCurveDialog(QDialog):
 		self.addButton.clicked.connect(self.on_add_point)
 		self.removeButton.clicked.connect(self.on_remove_point)
 		self.closeButton.clicked.connect(self.accept)
+		self.ignoreZerosCheck.toggled.connect(self.previewWidget.update)
 		self._rebuild_rows()
 
 	def _current_scope_text(self):
@@ -179,6 +316,7 @@ class TransferCurveDialog(QDialog):
 		self.removeButton.setEnabled(len(self.points) > 2)
 		self.addButton.setEnabled(self.active_index < len(self.points) - 1)
 		self._rebuilding = False
+		self.previewWidget.update()
 
 	def _set_active_index(self, point_index):
 		"""Mark one row as active and refresh row highlighting."""
@@ -189,6 +327,7 @@ class TransferCurveDialog(QDialog):
 				widget.set_active(widget.point_index == self.active_index)
 		self.addButton.setEnabled(self.active_index < len(self.points) - 1)
 		self.removeButton.setEnabled(len(self.points) > 2)
+		self.previewWidget.update()
 
 	def _sync_points_from_rows(self):
 		"""Read the current row editor values into the local point list."""
@@ -203,6 +342,7 @@ class TransferCurveDialog(QDialog):
 		"""Persist the current point list and refresh dependent UI."""
 		self.detector_image.set_transfer_points_pct(self.points)
 		self.points = list(self.detector_image.transfer_points_pct)
+		self.previewWidget.update()
 		if callable(self.on_curve_changed):
 			self.on_curve_changed()
 
@@ -473,7 +613,7 @@ class OverlayEditorDialog(QDialog):
 		self._notify_change()
 
 
-class PropDetectorImage(PropWidget):
+class PropDetectorImage(FlowPanelMixin, PropWidget):
 	"""Edit display settings and viewer actions for one detector image object."""
 
 	def __init__(self, _obj: DetectorImage, parent=None):
@@ -486,23 +626,24 @@ class PropDetectorImage(PropWidget):
 		"""Create one compact manual property panel."""
 		layout = QVBoxLayout(self)
 		layout.setContentsMargins(0, 0, 0, 0)
+		layout.setAlignment(Qt.AlignTop)
 
-		info_group = QGroupBox("Detector Image")
-		info_form = QFormLayout(info_group)
-		self._configure_form_layout(info_form)
+		info_group, info_layout = self._create_flow_group("Detector Image")
 		self.infoLabel = QLabel("")
 		self.windowLabel = QLabel("")
+		self.windowLabel.setWordWrap(True)
 		self.rangeLabel = QLabel("")
 		self.modeLabel = QLabel("")
 		self.layerLabel = QLabel("")
 		self.transferLabel = QLabel("")
 		self.transferLabel.setWordWrap(True)
-		info_form.addRow("Info:", self.infoLabel)
-		info_form.addRow("Layer:", self.layerLabel)
-		info_form.addRow("Mode:", self.modeLabel)
-		info_form.addRow("Window:", self.windowLabel)
-		info_form.addRow("Range:", self.rangeLabel)
-		info_form.addRow("Curve:", self.transferLabel)
+		self.transferLabel.setMaximumWidth(320)
+		self._add_flow_control(info_layout, "Info", self.infoLabel)
+		self._add_flow_control(info_layout, "Layer", self.layerLabel)
+		self._add_flow_control(info_layout, "Mode", self.modeLabel)
+		self._add_flow_control(info_layout, "Window", self.windowLabel)
+		self._add_flow_control(info_layout, "Range", self.rangeLabel)
+		self._add_flow_control(info_layout, "Curve", self.transferLabel)
 		layout.addWidget(info_group)
 
 		preview_group = QGroupBox("Preview")
@@ -513,9 +654,7 @@ class PropDetectorImage(PropWidget):
 		preview_layout.addWidget(self.thumbnailLabel)
 		layout.addWidget(preview_group)
 
-		display_group = QGroupBox("Display")
-		display_form = QFormLayout(display_group)
-		self._configure_form_layout(display_form)
+		display_group, display_layout = self._create_flow_group("Display")
 		self.layerCombo = QComboBox()
 		self._set_compact_field(self.layerCombo)
 		self.modeCombo = QComboBox()
@@ -581,27 +720,25 @@ class PropDetectorImage(PropWidget):
 		self._set_compact_field(self.overlayCrossSizeSpin)
 		self.onlyWindowRangeCheck = QCheckBox("Only window range")
 		self.invertCheck = QCheckBox("Invert")
-		display_form.addRow("Layer:", self.layerCombo)
-		display_form.addRow("Mode:", self.modeCombo)
-		display_form.addRow("Window center:", self.windowCenterSpin)
-		display_form.addRow("Window width:", self.windowWidthSpin)
-		display_form.addRow("Gamma:", self.gammaSpin)
-		display_form.addRow("Contrast:", self.contrastSpin)
-		display_form.addRow("Input transform:", self.inputTransformCombo)
-		display_form.addRow("Local enhancement:", self.localEnhancementCombo)
-		display_form.addRow("CLAHE clip:", self.claheClipLimitSpin)
-		display_form.addRow("CLAHE tile:", self.claheTileGridSpin)
-		display_form.addRow("Robust [%]:", self.robustPercentileWidget)
-		display_form.addRow("Cross size [px]:", self.overlayCrossSizeSpin)
-		display_form.addRow("", self.overlayAnnotationsCheck)
-		display_form.addRow("", self.overlayLabelsCheck)
-		display_form.addRow("", self.onlyWindowRangeCheck)
-		display_form.addRow("", self.invertCheck)
+		self._add_flow_control(display_layout, "Layer", self.layerCombo)
+		self._add_flow_control(display_layout, "Mode", self.modeCombo)
+		self._add_flow_control(display_layout, "Window center", self.windowCenterSpin)
+		self._add_flow_control(display_layout, "Window width", self.windowWidthSpin)
+		self._add_flow_control(display_layout, "Gamma", self.gammaSpin)
+		self._add_flow_control(display_layout, "Contrast", self.contrastSpin)
+		self._add_flow_control(display_layout, "Input transform", self.inputTransformCombo)
+		self._add_flow_control(display_layout, "Local enhancement", self.localEnhancementCombo)
+		self._add_flow_control(display_layout, "CLAHE clip", self.claheClipLimitSpin)
+		self._add_flow_control(display_layout, "CLAHE tile", self.claheTileGridSpin)
+		self._add_flow_control(display_layout, "Robust [%]", self.robustPercentileWidget)
+		self._add_flow_control(display_layout, "Cross size [px]", self.overlayCrossSizeSpin)
+		self._add_flow_control(display_layout, "", self.overlayAnnotationsCheck)
+		self._add_flow_control(display_layout, "", self.overlayLabelsCheck)
+		self._add_flow_control(display_layout, "", self.onlyWindowRangeCheck)
+		self._add_flow_control(display_layout, "", self.invertCheck)
 		layout.addWidget(display_group)
 
-		button_row = QWidget()
-		button_layout = FlowLayout(button_row, spacing=4)
-		button_layout.setContentsMargins(0, 0, 0, 0)
+		actions_group, actions_layout = self._create_flow_group("Actions")
 		self.autoWindowButton = QPushButton("Auto window")
 		self.fullRangeButton = QPushButton("Full range")
 		self.showWindowButton = QPushButton("Show 2D")
@@ -621,15 +758,15 @@ class PropDetectorImage(PropWidget):
 			self.exportArrayButton,
 		):
 			button.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-		button_layout.addWidget(self.autoWindowButton)
-		button_layout.addWidget(self.fullRangeButton)
-		button_layout.addWidget(self.showWindowButton)
-		button_layout.addWidget(self.editCurveButton)
-		button_layout.addWidget(self.editOverlaysButton)
-		button_layout.addWidget(self.savePngButton)
-		button_layout.addWidget(self.importArrayButton)
-		button_layout.addWidget(self.exportArrayButton)
-		layout.addWidget(button_row)
+		self._add_flow_control(actions_layout, "", self.autoWindowButton)
+		self._add_flow_control(actions_layout, "", self.fullRangeButton)
+		self._add_flow_control(actions_layout, "", self.showWindowButton)
+		self._add_flow_control(actions_layout, "", self.editCurveButton)
+		self._add_flow_control(actions_layout, "", self.editOverlaysButton)
+		self._add_flow_control(actions_layout, "", self.savePngButton)
+		self._add_flow_control(actions_layout, "", self.importArrayButton)
+		self._add_flow_control(actions_layout, "", self.exportArrayButton)
+		layout.addWidget(actions_group)
 		layout.addStretch(1)
 
 		self.layerCombo.currentIndexChanged.connect(self.on_layer_changed)
@@ -692,10 +829,6 @@ class PropDetectorImage(PropWidget):
 		layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
 		layout.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
 		layout.setRowWrapPolicy(QFormLayout.DontWrapRows)
-
-	def _set_compact_field(self, widget):
-		"""Prefer size-hint width for form editors inside this dock panel."""
-		widget.setSizePolicy(QSizePolicy.Maximum, widget.sizePolicy().verticalPolicy())
 
 	def _update_display_visibility(self, obj):
 		"""Enable only controls that affect the currently selected presentation mode."""

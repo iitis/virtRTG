@@ -487,6 +487,38 @@ def test_detector_image_auto_window_uses_two_sided_robust_percentiles():
 	assert np.isclose(vmax, 26.5)
 
 
+def test_detector_image_transfer_curve_preview_data_uses_presented_input_histogram():
+	"""Build one normalized histogram from the pre-curve presented image and expose curve points."""
+	detector_image = DetectorImage()
+	detector_image.setArray(np.array([[0.0, 1.0, 2.0, 3.0]], dtype=np.float32), auto_window=False)
+	detector_image.presentation_mode = "raw"
+	detector_image.presentation_window_center = 1.5
+	detector_image.presentation_window_width = 3.0
+	detector_image.set_transfer_points_pct([(0.0, 10.0), (50.0, 90.0), (100.0, 100.0)])
+
+	preview = detector_image.transfer_curve_preview_data(histogram_bins=4)
+
+	assert preview["histogram"].shape == (8,)
+	assert np.isclose(float(np.max(preview["histogram"])), 1.0)
+	assert np.allclose(preview["curve_x"], [0.0, 0.5, 1.0], atol=1e-6)
+	assert np.allclose(preview["curve_y"], [0.1, 0.9, 1.0], atol=1e-6)
+
+
+def test_detector_image_transfer_curve_preview_data_ignores_zero_background_when_possible():
+	"""Skip zero-valued background samples so the preview histogram shows useful occupied bins."""
+	detector_image = DetectorImage()
+	detector_image.setArray(np.array([[0.0, 0.0, 0.0, 1.0, 2.0, 3.0]], dtype=np.float32), auto_window=False)
+	detector_image.presentation_mode = "raw"
+	detector_image.presentation_window_center = 1.5
+	detector_image.presentation_window_width = 3.0
+
+	preview = detector_image.transfer_curve_preview_data(histogram_bins=8, ignore_zero_values=True)
+
+	assert preview["histogram"].shape == (8,)
+	assert np.isclose(preview["histogram"][0], 0.0)
+	assert np.count_nonzero(preview["histogram"]) >= 2
+
+
 def test_virtual_xray_scene_sources_use_active_motion_frame_by_default():
 	"""Use only the active `Motion` frame unless the expansion mode requests all frames."""
 	virtual_xray = VirtualXRay()
