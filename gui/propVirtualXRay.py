@@ -44,6 +44,8 @@ from ..detectorImage import DetectorImage
 from .detectorImageViewer import DetectorImageViewerChild
 from .flowPanel import FlowGroupBox as _FlowGroupBox
 from .flowPanel import FlowPanelMixin
+from .transferCurveDialog import TransferCurveDialog
+from ..xray.xrayProjection import XRayPhysicsModel
 from ..xray.xraySource import get_xray_material_response_config, set_xray_material_response_config
 from ..xray.xraySource import ensure_xray_source_config
 
@@ -234,7 +236,7 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 			self.physicsMaterialWindowCenterSpin.setSingleStep(1.0)
 			self._set_compact_field(self.physicsMaterialWindowCenterSpin)
 			self.physicsMaterialResponseModeCombo = QComboBox()
-			self.physicsMaterialResponseModeCombo.addItems(["linear", "piecewise_bone", "piecewise_soft_tissue", "bone_threshold"])
+			self.physicsMaterialResponseModeCombo.addItems(["linear", "piecewise_bone", "piecewise_soft_tissue", "bone_threshold", "custom"])
 			self._set_compact_field(self.physicsMaterialResponseModeCombo)
 			self.physicsBoneThresholdSpin = QDoubleSpinBox()
 			self.physicsBoneThresholdSpin.setRange(-1e6, 1e6)
@@ -260,11 +262,15 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 			self.physicsMaterialWindowSoftnessSpin.setSingleStep(1.0)
 			self._set_compact_field(self.physicsMaterialWindowSoftnessSpin)
 			self.physicsAutoBoneButton = QPushButton("Auto bone threshold")
+			self.physicsEditCustomCurveButton = QPushButton("Edit custom curve")
 			self.physicsAutoBoneButton.setToolTip("Automatically set the bone threshold based on the current volumes and source energy.")
 			self.physicsAutoBoneButton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+			self.physicsEditCustomCurveButton.setToolTip("Edit one custom HU-to-attenuation response curve.")
+			self.physicsEditCustomCurveButton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
 			self._add_flow_control(physics_layout, "Response", self.physicsMaterialResponseModeCombo)
 			self._add_flow_control(physics_layout, "Bone thresh.", self.physicsBoneThresholdSpin)
 			self._add_flow_control(physics_layout, "Bone softn.", self.physicsBoneThresholdSoftnessSpin)
+			self._add_flow_control(physics_layout, "", self.physicsEditCustomCurveButton)
 			self._add_flow_control(physics_layout, "Center [HU]", self.physicsMaterialWindowCenterSpin)
 			self._add_flow_control(physics_layout, "Width [HU]", self.physicsMaterialWindowWidthSpin)
 			self._add_flow_control(physics_layout, "Mode", self.physicsMaterialWindowModeCombo)
@@ -983,6 +989,7 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		self.physicsMaterialResponseModeCombo.currentTextChanged.connect(self.on_physics_material_response_changed)
 		self.physicsBoneThresholdSpin.valueChanged.connect(self.on_physics_bone_threshold_changed)
 		self.physicsBoneThresholdSoftnessSpin.valueChanged.connect(self.on_physics_bone_threshold_softness_changed)
+		self.physicsEditCustomCurveButton.clicked.connect(self.on_edit_custom_material_response_curve)
 		self.physicsMaterialWindowCenterSpin.valueChanged.connect(self.on_physics_material_window_changed)
 		self.physicsMaterialWindowWidthSpin.valueChanged.connect(self.on_physics_material_window_changed)
 		self.physicsMaterialWindowModeCombo.currentTextChanged.connect(self.on_physics_material_window_mode_changed)
@@ -1101,6 +1108,7 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		distance_enabled = str(getattr(obj, "physics_source_distance_falloff_mode", "none")).lower() != "none"
 		self.physicsBoneThresholdSpin.setEnabled(uses_bone_threshold)
 		self.physicsBoneThresholdSoftnessSpin.setEnabled(uses_bone_threshold)
+		self.physicsEditCustomCurveButton.setEnabled(response_mode == "custom")
 		self.physicsMaterialWindowModeCombo.setEnabled(width_enabled)
 		self.physicsMaterialWindowSoftnessSpin.setEnabled(width_enabled and mode in {"linear", "sigmoid"})
 		self.physicsIntensityFloorSpin.setEnabled(str(obj.physics_output_mode).lower() == "intensity")
@@ -1326,6 +1334,43 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		obj = self.obj_ref()
 		obj.physics_material_response_mode = str(value)
 		self._after_change(obj)
+
+	@pyqtSlot()
+	def on_edit_custom_material_response_curve(self):
+		"""Open the shared curve editor for the custom HU-to-attenuation response."""
+		obj = self.obj_ref()
+		if obj is None:
+			return
+		current_points = XRayPhysicsModel.sanitize_material_response_curve_points(
+			getattr(obj, "physics_material_response_curve_points", None)
+		)
+		obj.physics_material_response_curve_points = list(current_points)
+		y_max = max(
+			0.06,
+			float(getattr(obj, "physics_mu_water", 0.02)) * 4.0,
+			max(float(point[1]) for point in current_points),
+		)
+		dialog = TransferCurveDialog(
+			obj,
+			on_curve_changed=lambda: self._after_change(obj),
+			parent=self,
+			title=f"Material Response Curve: {obj.label}",
+			points_getter=lambda: list(obj.physics_material_response_curve_points),
+			points_setter=lambda points: setattr(
+				obj,
+				"physics_material_response_curve_points",
+				XRayPhysicsModel.sanitize_material_response_curve_points(points),
+			),
+			preview_provider=lambda **_kwargs: {},
+			scope_text_provider=lambda: "Custom HU-to-mu response curve used when Physics -> Response = custom.",
+			x_label="HU",
+			y_label="mu",
+			x_range=(-1000.0, 4000.0),
+			y_range=(0.0, y_max),
+			show_histogram=False,
+			lock_endpoints_x=(True, True),
+		)
+		dialog.exec_()
 
 	@pyqtSlot(float)
 	def on_physics_bone_threshold_changed(self, value):

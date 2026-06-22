@@ -370,10 +370,49 @@ class XRayPhysicsModel:
 	material_response_mode: str = "linear"
 	bone_threshold_hu: float | None = None
 	bone_threshold_softness: float = 250.0
+	material_response_curve_points: list[tuple[float, float]] = field(default_factory=list)
 	material_window_center: float | None = None
 	material_window_width: float | None = None
 	material_window_mode: str = "hard"
 	material_window_softness: float = 150.0
+
+	@staticmethod
+	def default_material_response_curve_points():
+		"""Return the default editable control points for the custom material response curve."""
+		return [
+			(-1000.0, 0.0),
+			(-300.0, 0.0006),
+			(0.0, 0.0090),
+			(300.0, 0.0180),
+			(1000.0, 0.0320),
+			(3000.0, 0.0520),
+			(4000.0, 0.0600),
+		]
+
+	@classmethod
+	def sanitize_material_response_curve_points(cls, points):
+		"""Return one sorted, de-duplicated custom material response curve."""
+		sanitized = []
+		for point in list(points or []):
+			if point is None or len(point) != 2:
+				continue
+			x_value = float(point[0])
+			y_value = max(0.0, float(point[1]))
+			if not np.isfinite(x_value) or not np.isfinite(y_value):
+				continue
+			sanitized.append((x_value, y_value))
+		if len(sanitized) < 2:
+			sanitized = list(cls.default_material_response_curve_points())
+		sanitized.sort(key=lambda item: (item[0], item[1]))
+		merged = []
+		for x_value, y_value in sanitized:
+			if merged and abs(x_value - merged[-1][0]) <= 1e-6:
+				merged[-1] = (x_value, y_value)
+			else:
+				merged.append((x_value, y_value))
+		if len(merged) < 2:
+			merged = list(cls.default_material_response_curve_points())
+		return merged
 
 	def attenuation_energy_scale(self):
 		"""Return one heuristic scale factor that decreases attenuation for higher source energy."""
@@ -393,6 +432,8 @@ class XRayPhysicsModel:
 			mu = self._scalar_to_mu_piecewise_soft_tissue(scalar_values, energy_scale=energy_scale)
 		elif mode == "bone_threshold":
 			mu = self._scalar_to_mu_bone_threshold(scalar_values, energy_scale=energy_scale)
+		elif mode == "custom":
+			mu = self._scalar_to_mu_custom_curve(scalar_values, energy_scale=energy_scale)
 		else:
 			relative_density = np.maximum(0.0, 1.0 + scalar_values / abs(float(self.hounsfield_air)))
 			mu = (float(self.mu_air) + float(self.mu_water) * relative_density) * float(self.attenuation_scale) * energy_scale
@@ -466,6 +507,12 @@ class XRayPhysicsModel:
 			linear_mu * (1.0 - soft_tissue_mix * weight)
 			+ bone_mu * weight
 		).astype(np.float32, copy=False)
+
+	def _scalar_to_mu_custom_curve(self, scalar_values, energy_scale=1.0):
+		"""Return attenuation from one user-defined piecewise-linear HU-to-mu curve."""
+		control_points = self.sanitize_material_response_curve_points(self.material_response_curve_points)
+		mu = self._piecewise_linear_map(scalar_values, control_points)
+		return (mu * float(energy_scale)).astype(np.float32, copy=False)
 
 	def source_distance_gain(self, source_to_detector_distance_mm, projection_mode=None):
 		"""Return one multiplicative detector gain caused by distance from the source."""

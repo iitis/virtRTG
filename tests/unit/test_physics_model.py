@@ -52,6 +52,22 @@ def test_integral_to_image_intensity_mode_applies_beer_lambert_response():
 	assert np.allclose(intensity, [1.0, 0.5], atol=1e-6)
 
 
+def test_scalar_to_mu_custom_mode_uses_user_defined_piecewise_curve():
+	"""Map HU-like inputs through one editable custom response curve."""
+	model = XRayPhysicsModel(
+		material_response_mode="custom",
+		material_response_curve_points=[
+			(-1000.0, 0.0),
+			(0.0, 0.02),
+			(1000.0, 0.06),
+		],
+	)
+
+	mu = model.scalar_to_mu(np.array([-1000.0, 0.0, 500.0, 1000.0], dtype=np.float32))
+
+	assert np.allclose(mu, [0.0, 0.02, 0.04, 0.06], atol=1e-6)
+
+
 def test_source_distance_gain_uses_inverse_power_falloff():
 	"""Apply inverse-square-like gain relative to one reference source distance."""
 	model = XRayPhysicsModel(

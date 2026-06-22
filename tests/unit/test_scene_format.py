@@ -86,6 +86,12 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
 	virtual_xray.label = "vxray-roundtrip"
 	virtual_xray.set_detector_image_defaults({"mode": "film"})
 	virtual_xray.physics_source_energy_kev = 85.0
+	virtual_xray.physics_material_response_mode = "custom"
+	virtual_xray.physics_material_response_curve_points = [
+		(-1000.0, 0.0),
+		(0.0, 0.015),
+		(1000.0, 0.05),
+	]
 
 	transform = Transform()
 	transform.label = "source-transform"
@@ -115,6 +121,12 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
 	assert isinstance(imported, VirtualXRay)
 	assert imported.get_detector_image_defaults()["mode"] == "film"
 	assert imported.physics_source_energy_kev == 85.0
+	assert imported.physics_material_response_mode == "custom"
+	assert imported.physics_material_response_curve_points == [
+		(-1000.0, 0.0),
+		(0.0, 0.015),
+		(1000.0, 0.05),
+	]
 	assert len(imported.children()) == 1
 	imported_transform = imported.children()[0]
 	assert isinstance(imported_transform, Transform)

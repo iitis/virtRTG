@@ -246,6 +246,7 @@ class VirtualXRay(Object):
 		self.physics_material_response_mode = "linear"
 		self.physics_bone_threshold_hu = None
 		self.physics_bone_threshold_softness = 250.0
+		self.physics_material_response_curve_points = XRayPhysicsModel.default_material_response_curve_points()
 		self.physics_material_window_center = None
 		self.physics_material_window_width = None
 		self.physics_material_window_mode = "hard"
@@ -636,6 +637,9 @@ class VirtualXRay(Object):
 			material_response_mode=self.physics_material_response_mode,
 			bone_threshold_hu=self.physics_bone_threshold_hu,
 			bone_threshold_softness=self.physics_bone_threshold_softness,
+			material_response_curve_points=XRayPhysicsModel.sanitize_material_response_curve_points(
+				self.physics_material_response_curve_points
+			),
 			material_window_center=self.physics_material_window_center,
 			material_window_width=self.physics_material_window_width,
 			material_window_mode=self.physics_material_window_mode,

@@ -23,6 +23,7 @@ from .xray.xrayAnnotationOverlay import (
 	overlay_projection_set_from_payload,
 	overlay_projection_set_to_payload,
 )
+from .xray.xrayProjection import XRayPhysicsModel
 from .xray.xraySource import (
 	XRayMaterialResponseConfig,
 	ensure_xray_source_config,
@@ -402,6 +403,10 @@ def _virtual_xray_payload(virtual_xray):
 			"material_response_mode": str(virtual_xray.physics_material_response_mode),
 			"bone_threshold_hu": virtual_xray.physics_bone_threshold_hu,
 			"bone_threshold_softness": float(virtual_xray.physics_bone_threshold_softness),
+			"material_response_curve_points": [
+				[float(x_value), float(y_value)]
+				for x_value, y_value in virtual_xray.physics_material_response_curve_points
+			],
 			"material_window_center": virtual_xray.physics_material_window_center,
 			"material_window_width": virtual_xray.physics_material_window_width,
 			"material_window_mode": str(virtual_xray.physics_material_window_mode),
@@ -630,6 +635,9 @@ def _apply_virtual_xray_payload(virtual_xray, payload):
 	virtual_xray.physics_material_response_mode = str(physics.get("material_response_mode", virtual_xray.physics_material_response_mode))
 	virtual_xray.physics_bone_threshold_hu = physics.get("bone_threshold_hu", virtual_xray.physics_bone_threshold_hu)
 	virtual_xray.physics_bone_threshold_softness = float(physics.get("bone_threshold_softness", virtual_xray.physics_bone_threshold_softness))
+	virtual_xray.physics_material_response_curve_points = XRayPhysicsModel.sanitize_material_response_curve_points(
+		physics.get("material_response_curve_points", virtual_xray.physics_material_response_curve_points)
+	)
 	virtual_xray.physics_material_window_center = physics.get("material_window_center", virtual_xray.physics_material_window_center)
 	virtual_xray.physics_material_window_width = physics.get("material_window_width", virtual_xray.physics_material_window_width)
 	virtual_xray.physics_material_window_mode = str(physics.get("material_window_mode", virtual_xray.physics_material_window_mode))
@@ -736,6 +744,9 @@ def _write_virtual_xray_text_sections(writer_cls, stream, virtual_xray, indent):
 	stream.write(f'{ind2}materialResponseMode "{virtual_xray.physics_material_response_mode}"\n')
 	stream.write(f"{ind2}boneThresholdHU {_atmdl_optional_scalar_text(virtual_xray.physics_bone_threshold_hu)}\n")
 	stream.write(f"{ind2}boneThresholdSoftness {float(virtual_xray.physics_bone_threshold_softness):.16g}\n")
+	stream.write(
+		f'{ind2}materialResponseCurveJSON "{json.dumps([[float(x_value), float(y_value)] for x_value, y_value in virtual_xray.physics_material_response_curve_points], ensure_ascii=True).replace(chr(34), chr(92) + chr(34))}"\n'
+	)
 	stream.write(f"{ind2}materialWindowCenter {_atmdl_optional_scalar_text(virtual_xray.physics_material_window_center)}\n")
 	stream.write(f"{ind2}materialWindowWidth {_atmdl_optional_scalar_text(virtual_xray.physics_material_window_width)}\n")
 	stream.write(f'{ind2}materialWindowMode "{virtual_xray.physics_material_window_mode}"\n')
@@ -973,6 +984,14 @@ def _apply_virtual_xray_text_sections(virtual_xray, sections):
 			virtual_xray.physics_material_response_mode = str(physics["materialResponseMode"])
 		virtual_xray.physics_bone_threshold_hu = _atmdl_read_optional_float(physics.get("boneThresholdHU"), virtual_xray.physics_bone_threshold_hu)
 		virtual_xray.physics_bone_threshold_softness = float(physics.get("boneThresholdSoftness", virtual_xray.physics_bone_threshold_softness))
+		curve_json = physics.get("materialResponseCurveJSON")
+		if curve_json is not None:
+			try:
+				virtual_xray.physics_material_response_curve_points = XRayPhysicsModel.sanitize_material_response_curve_points(
+					json.loads(str(curve_json))
+				)
+			except Exception:
+				pass
 		virtual_xray.physics_material_window_center = _atmdl_read_optional_float(physics.get("materialWindowCenter"), virtual_xray.physics_material_window_center)
 		virtual_xray.physics_material_window_width = _atmdl_read_optional_float(physics.get("materialWindowWidth"), virtual_xray.physics_material_window_width)
 		if physics.get("materialWindowMode") is not None:
