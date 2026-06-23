@@ -861,7 +861,7 @@ def _parse_section_mapping(parser, stream):
 		"stepMM", "qualityProfile", "projectionMode", "depthWindowMode",
 		"interpolation", "preprocessMode", "meshSourceMode", "outputMode",
 		"sourceDistanceFalloffMode", "materialResponseMode", "materialWindowMode",
-		"mode", "sourceType", "interpolationOverride", "volumeBackend",
+		"materialResponseCurveJSON", "mode", "sourceType", "interpolationOverride", "volumeBackend",
 		"meshBackend", "meshMode", "windowMode",
 	}
 	bool_keys = {

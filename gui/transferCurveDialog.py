@@ -11,9 +11,11 @@ from PyQt5.QtWidgets import (
 	QCheckBox,
 	QDialog,
 	QDoubleSpinBox,
+	QFileDialog,
 	QFrame,
 	QHBoxLayout,
 	QLabel,
+	QMessageBox,
 	QPushButton,
 	QSizePolicy,
 	QVBoxLayout,
@@ -391,15 +393,21 @@ class TransferCurveDialog(QDialog):
 		button_layout.setContentsMargins(0, 0, 0, 0)
 		self.addButton = QPushButton("Add")
 		self.removeButton = QPushButton("Remove")
+		self.loadButton = QPushButton("Load")
+		self.saveButton = QPushButton("Save")
 		self.closeButton = QPushButton("Close")
 		button_layout.addWidget(self.addButton)
 		button_layout.addWidget(self.removeButton)
+		button_layout.addWidget(self.loadButton)
+		button_layout.addWidget(self.saveButton)
 		button_layout.addStretch(1)
 		button_layout.addWidget(self.closeButton)
 		layout.addWidget(button_row)
 
 		self.addButton.clicked.connect(self.on_add_point)
 		self.removeButton.clicked.connect(self.on_remove_point)
+		self.loadButton.clicked.connect(self.on_load_points)
+		self.saveButton.clicked.connect(self.on_save_points)
 		self.closeButton.clicked.connect(self.accept)
 		self.ignoreZerosCheck.toggled.connect(self.previewWidget.update)
 		self._rebuild_rows()
@@ -503,6 +511,48 @@ class TransferCurveDialog(QDialog):
 		if callable(self.on_curve_changed):
 			self.on_curve_changed()
 
+	def _default_points_file_name(self):
+		"""Return one user-facing default file name for point import/export."""
+		label = str(getattr(self.curve_owner, "label", "curve")).strip() or "curve"
+		safe_label = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in label).strip("_")
+		if safe_label == "":
+			safe_label = "curve"
+		return f"{safe_label}_points.txt"
+
+	def _points_dialog_filter(self):
+		"""Return one file-dialog filter for text-based point lists."""
+		return "Text points (*.txt *.csv *.tsv);;Text (*.txt);;CSV (*.csv);;TSV (*.tsv)"
+
+	def _serialize_points_text(self):
+		"""Return the current point list as one UTF-8 text payload."""
+		lines = [
+			f"# Transfer curve points: {self.x_label} {self.y_label}",
+			f"# x_range={self.x_range[0]:.16g},{self.x_range[1]:.16g}",
+			f"# y_range={self.y_range[0]:.16g},{self.y_range[1]:.16g}",
+			"# x y",
+		]
+		for x_value, y_value in self.points:
+			lines.append(f"{float(x_value):.16g}\t{float(y_value):.16g}")
+		return "\n".join(lines) + "\n"
+
+	def _parse_points_text(self, text):
+		"""Parse one text payload into a point list accepted by this dialog."""
+		points = []
+		for raw_line in str(text).splitlines():
+			line = raw_line.strip()
+			if line == "" or line.startswith("#"):
+				continue
+			line = line.replace(",", " ").replace(";", " ")
+			parts = [part for part in line.split() if part]
+			if len(parts) < 2:
+				continue
+			x_value = float(parts[0])
+			y_value = float(parts[1])
+			points.append((x_value, y_value))
+		if len(points) < 2:
+			raise ValueError("Point file must contain at least two valid points.")
+		return points
+
 	def _on_rows_changed(self):
 		"""Store edited point values after any spin-box change."""
 		if self._rebuilding:
@@ -553,3 +603,41 @@ class TransferCurveDialog(QDialog):
 		self.active_index = min(self.active_index, len(self.points) - 1)
 		self._apply_points()
 		self._rebuild_rows()
+
+	@pyqtSlot()
+	def on_save_points(self):
+		"""Save the current point list into one simple text file."""
+		self._sync_points_from_rows()
+		path, _selected_filter = QFileDialog.getSaveFileName(
+			self,
+			"Save curve points",
+			self._default_points_file_name(),
+			self._points_dialog_filter(),
+		)
+		if not path:
+			return
+		try:
+			with open(path, "w", encoding="utf-8", newline="\n") as stream:
+				stream.write(self._serialize_points_text())
+		except Exception as exc:
+			QMessageBox.critical(self, "Save curve points", str(exc))
+
+	@pyqtSlot()
+	def on_load_points(self):
+		"""Load one point list from a simple text file and apply it to this curve."""
+		path, _selected_filter = QFileDialog.getOpenFileName(
+			self,
+			"Load curve points",
+			"",
+			self._points_dialog_filter(),
+		)
+		if not path:
+			return
+		try:
+			with open(path, "r", encoding="utf-8") as stream:
+				loaded_points = self._parse_points_text(stream.read())
+			self.points = loaded_points
+			self._apply_points()
+			self._rebuild_rows()
+		except Exception as exc:
+			QMessageBox.critical(self, "Load curve points", str(exc))

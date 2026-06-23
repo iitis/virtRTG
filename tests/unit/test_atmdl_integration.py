@@ -182,3 +182,34 @@ def test_virtual_xray_text_sections_override_stale_base64_payload(tmp_path):
 		assert imported.get_detector_image_defaults()["gamma"] == 1.9
 	finally:
 		unregister_atmdl_integration()
+
+
+def test_virtual_xray_atmdl_text_sections_parse_custom_material_curve_json(tmp_path):
+	"""Editable ATMDL physics sections should accept one quoted custom response-curve JSON payload."""
+	register_atmdl_integration()
+	try:
+		virtual_xray = VirtualXRay()
+		virtual_xray.label = "vx-custom-curve"
+		virtual_xray.physics_material_response_mode = "custom"
+		virtual_xray.physics_material_response_curve_points = [
+			(-1000.0, 0.0),
+			(0.0, 0.012),
+			(1000.0, 0.045),
+		]
+
+		scene_path = tmp_path / "virtual_xray_custom_curve.atmdl"
+		assert WriterATMDL.save(virtual_xray, str(scene_path)) is True
+
+		imported = ParserATMDL.load(str(scene_path))
+		if imported.hasType("Transform"):
+			imported = imported.children()[0]
+
+		assert imported.hasType("VirtualXRay")
+		assert imported.physics_material_response_mode == "custom"
+		assert imported.physics_material_response_curve_points == [
+			(-1000.0, 0.0),
+			(0.0, 0.012),
+			(1000.0, 0.045),
+		]
+	finally:
+		unregister_atmdl_integration()
