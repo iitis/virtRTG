@@ -22,6 +22,41 @@ class XRayPresentationModel(ABC):
 		"""Return a presentation image derived from the raw projection result."""
 
 
+def fuse_exposure_stack(images, strength=1.0, sigma=0.28, contrast_boost=2.0):
+	"""Blend multiple normalized presentation variants into one exposure-fused image.
+
+	The fusion is intentionally lightweight and presentation-only. It combines
+	well-exposedness with a small local-contrast term so the output can improve
+	readability without changing the raw projection physics.
+	"""
+	stack = np.asarray(images, dtype=np.float32)
+	if stack.ndim != 3 or stack.shape[0] <= 0:
+		raise ValueError("Exposure fusion expects a stack shaped as (N, H, W).")
+	stack = np.clip(stack, 0.0, 1.0)
+	if stack.shape[0] == 1:
+		return stack[0].astype(np.float32, copy=True)
+
+	sigma = max(1e-3, float(sigma))
+	contrast_boost = max(0.0, float(contrast_boost))
+	strength = min(1.0, max(0.0, float(strength)))
+	base = stack[min(stack.shape[0] // 2, stack.shape[0] - 1)]
+
+	exposure_weight = np.exp(-0.5 * np.square((stack - 0.5) / sigma)).astype(np.float32, copy=False)
+	contrast_weight = np.empty_like(stack, dtype=np.float32)
+	for index, image in enumerate(stack):
+		laplacian = cv2.Laplacian(image, cv2.CV_32F, ksize=3)
+		contrast_weight[index] = np.abs(laplacian).astype(np.float32, copy=False)
+	if contrast_boost > 0.0:
+		contrast_weight = np.power(contrast_weight + 1e-6, contrast_boost).astype(np.float32, copy=False)
+	weights = exposure_weight * (0.10 + contrast_weight)
+	weights += 1e-6
+	weights_sum = np.sum(weights, axis=0, keepdims=True)
+	fused = np.sum(stack * weights, axis=0) / np.maximum(weights_sum[0], 1e-6)
+	if strength <= 0.0:
+		return base.astype(np.float32, copy=True)
+	return np.clip(base * (1.0 - strength) + fused * strength, 0.0, 1.0).astype(np.float32, copy=False)
+
+
 def _normalize_range(image, vmin, vmax):
 	"""Return one clipped `[0, 1]` normalization for the provided numeric range."""
 	return np.clip((image - vmin) / max(vmax - vmin, 1e-6), 0.0, 1.0)

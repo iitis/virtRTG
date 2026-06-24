@@ -9,6 +9,7 @@ from plugins.virtRTG.xray.xrayPresentation import (
 	DigitalRadiographyPresentationModel,
 	FilmLikePresentationModel,
 	RawPresentationModel,
+	fuse_exposure_stack,
 )
 
 
@@ -90,3 +91,18 @@ def test_digital_radiography_clahe_increases_local_contrast():
 
 	assert enhanced.dtype == np.float32
 	assert float(np.max(np.abs(np.diff(enhanced, axis=1)))) >= float(np.max(np.abs(np.diff(base, axis=1))))
+
+
+def test_exposure_fusion_stack_returns_unit_interval_blend():
+	"""Blend multiple display-ready presentation variants into one bounded image."""
+	under = np.array([[0.10, 0.25, 0.35]], dtype=np.float32)
+	base = np.array([[0.20, 0.50, 0.80]], dtype=np.float32)
+	over = np.array([[0.40, 0.70, 0.95]], dtype=np.float32)
+
+	result = fuse_exposure_stack(np.stack([under, base, over], axis=0), strength=0.85)
+
+	assert result.dtype == np.float32
+	assert result.shape == base.shape
+	assert float(np.min(result)) >= 0.0
+	assert float(np.max(result)) <= 1.0
+	assert not np.allclose(result, base)

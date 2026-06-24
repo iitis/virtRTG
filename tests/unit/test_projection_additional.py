@@ -474,6 +474,77 @@ def test_detector_image_defaults_roundtrip_preserves_log_and_clahe_settings(tmp_
 	assert imported.presentation_robust_low_percentile == 1.5
 
 
+def test_detector_image_defaults_roundtrip_preserves_exposure_fusion_settings(tmp_path):
+	"""Keep optional exposure-fusion presentation settings in the detector package."""
+	detector_image = DetectorImage()
+	detector_image.label = "detector-fusion-defaults"
+	detector_image.setArray(np.array([[0.0, 1.0, 2.0, 50.0]], dtype=np.float32), auto_window=False)
+	detector_image.apply_presentation_defaults({
+		"mode": "digital",
+		"exposure_fusion_enabled": True,
+		"exposure_fusion_profile": "soft_tissue",
+		"exposure_fusion_strength": 0.72,
+	})
+
+	export_path = tmp_path / "detector_fusion_defaults_roundtrip.npz"
+	detector_image.export_array(export_path)
+
+	imported = DetectorImage()
+	imported.import_array(export_path, auto_window=False)
+
+	assert imported.presentation_exposure_fusion_enabled is True
+	assert imported.presentation_exposure_fusion_profile == "soft_tissue"
+	assert np.isclose(imported.presentation_exposure_fusion_strength, 0.72)
+
+
+def test_detector_image_optional_exposure_fusion_changes_presented_array():
+	"""Blend several presentation variants only when the optional fusion toggle is enabled."""
+	detector_image = DetectorImage()
+	detector_image.setArray(np.array([[0.0, 4.0, 8.0, 32.0, 128.0]], dtype=np.float32), auto_window=False)
+	detector_image.presentation_mode = "digital"
+	detector_image.presentation_invert = False
+	detector_image.presentation_gamma = 1.0
+	detector_image.presentation_contrast = 1.0
+	detector_image.presentation_window_center = 16.0
+	detector_image.presentation_window_width = 32.0
+
+	base = detector_image.get_presented_array()
+	detector_image.presentation_exposure_fusion_enabled = True
+	detector_image.presentation_exposure_fusion_profile = "balanced"
+	detector_image.presentation_exposure_fusion_strength = 1.0
+	fused = detector_image.get_presented_array()
+
+	assert fused.dtype == np.float32
+	assert fused.shape == base.shape
+	assert float(np.min(fused)) >= 0.0
+	assert float(np.max(fused)) <= 1.0
+	assert not np.allclose(fused, base)
+
+
+def test_detector_image_exposure_fusion_profiles_produce_distinct_results():
+	"""Use profile selection to change the presentation character of exposure fusion."""
+	detector_image = DetectorImage()
+	detector_image.setArray(np.array([[0.0, 3.0, 9.0, 24.0, 80.0, 200.0]], dtype=np.float32), auto_window=False)
+	detector_image.presentation_mode = "digital"
+	detector_image.presentation_invert = False
+	detector_image.presentation_gamma = 1.0
+	detector_image.presentation_contrast = 1.0
+	detector_image.presentation_window_center = 20.0
+	detector_image.presentation_window_width = 40.0
+	detector_image.presentation_exposure_fusion_enabled = True
+	detector_image.presentation_exposure_fusion_strength = 1.0
+
+	detector_image.presentation_exposure_fusion_profile = "soft_tissue"
+	soft_tissue = detector_image.get_presented_array()
+	detector_image.presentation_exposure_fusion_profile = "bone_preserving"
+	bone_preserving = detector_image.get_presented_array()
+
+	assert soft_tissue.dtype == np.float32
+	assert bone_preserving.dtype == np.float32
+	assert soft_tissue.shape == bone_preserving.shape
+	assert not np.allclose(soft_tissue, bone_preserving)
+
+
 def test_detector_image_auto_window_uses_two_sided_robust_percentiles():
 	"""Use both lower and upper robust percentiles when computing one automatic display window."""
 	detector_image = DetectorImage()

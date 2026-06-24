@@ -363,6 +363,15 @@ class PropDetectorImage(FlowPanelMixin, PropWidget):
 		self.robustPercentileSpin.setDecimals(2)
 		self.robustPercentileSpin.setSingleStep(0.1)
 		self._set_compact_field(self.robustPercentileSpin)
+		self.exposureFusionCheck = QCheckBox("Enable exposure fusion")
+		self.exposureFusionProfileCombo = QComboBox()
+		self.exposureFusionProfileCombo.addItems(["balanced", "soft_tissue", "bone_preserving"])
+		self._set_compact_field(self.exposureFusionProfileCombo)
+		self.exposureFusionStrengthSpin = QDoubleSpinBox()
+		self.exposureFusionStrengthSpin.setRange(0.0, 1.0)
+		self.exposureFusionStrengthSpin.setDecimals(2)
+		self.exposureFusionStrengthSpin.setSingleStep(0.05)
+		self._set_compact_field(self.exposureFusionStrengthSpin)
 		self.robustPercentileWidget = QWidget()
 		self._set_compact_field(self.robustPercentileWidget)
 		robust_percentile_layout = QHBoxLayout(self.robustPercentileWidget)
@@ -390,6 +399,9 @@ class PropDetectorImage(FlowPanelMixin, PropWidget):
 		self._add_flow_control(display_layout, "CLAHE clip", self.claheClipLimitSpin)
 		self._add_flow_control(display_layout, "CLAHE tile", self.claheTileGridSpin)
 		self._add_flow_control(display_layout, "Robust [%]", self.robustPercentileWidget)
+		self._add_flow_control(display_layout, "", self.exposureFusionCheck)
+		self._add_flow_control(display_layout, "Fusion profile", self.exposureFusionProfileCombo)
+		self._add_flow_control(display_layout, "Fusion strength", self.exposureFusionStrengthSpin)
 		self._add_flow_control(display_layout, "Cross size [px]", self.overlayCrossSizeSpin)
 		self._add_flow_control(display_layout, "", self.overlayAnnotationsCheck)
 		self._add_flow_control(display_layout, "", self.overlayLabelsCheck)
@@ -440,6 +452,9 @@ class PropDetectorImage(FlowPanelMixin, PropWidget):
 		self.claheTileGridSpin.valueChanged.connect(self.on_display_changed)
 		self.robustPercentileLowSpin.valueChanged.connect(self.on_display_changed)
 		self.robustPercentileSpin.valueChanged.connect(self.on_display_changed)
+		self.exposureFusionCheck.toggled.connect(self.on_display_changed)
+		self.exposureFusionProfileCombo.currentTextChanged.connect(self.on_display_changed)
+		self.exposureFusionStrengthSpin.valueChanged.connect(self.on_display_changed)
 		self.overlayAnnotationsCheck.toggled.connect(self.on_display_changed)
 		self.overlayLabelsCheck.toggled.connect(self.on_display_changed)
 		self.overlayCrossSizeSpin.valueChanged.connect(self.on_display_changed)
@@ -474,6 +489,9 @@ class PropDetectorImage(FlowPanelMixin, PropWidget):
 			self.claheTileGridSpin,
 			self.robustPercentileLowSpin,
 			self.robustPercentileSpin,
+			self.exposureFusionCheck,
+			self.exposureFusionProfileCombo,
+			self.exposureFusionStrengthSpin,
 			self.overlayAnnotationsCheck,
 			self.overlayLabelsCheck,
 			self.overlayCrossSizeSpin,
@@ -509,6 +527,13 @@ class PropDetectorImage(FlowPanelMixin, PropWidget):
 		self.claheTileGridSpin.setEnabled(clahe_enabled)
 		self.robustPercentileLowSpin.setEnabled(is_digital or is_film)
 		self.robustPercentileSpin.setEnabled(is_digital or is_film)
+		self.exposureFusionCheck.setEnabled(not is_raw)
+		self.exposureFusionProfileCombo.setEnabled(
+			(not is_raw) and bool(getattr(obj, "presentation_exposure_fusion_enabled", False))
+		)
+		self.exposureFusionStrengthSpin.setEnabled(
+			(not is_raw) and bool(getattr(obj, "presentation_exposure_fusion_enabled", False))
+		)
 		self.autoWindowButton.setEnabled(True)
 		overlay_enabled = bool(getattr(obj, "presentation_overlay_annotations", False))
 		self.overlayLabelsCheck.setEnabled(overlay_enabled)
@@ -556,6 +581,9 @@ class PropDetectorImage(FlowPanelMixin, PropWidget):
 		self.claheTileGridSpin.setValue(int(getattr(obj, "presentation_clahe_tile_grid_size", 8)))
 		self.robustPercentileLowSpin.setValue(float(getattr(obj, "presentation_robust_low_percentile", 0.5)))
 		self.robustPercentileSpin.setValue(float(obj.presentation_robust_percentile))
+		self.exposureFusionCheck.setChecked(bool(getattr(obj, "presentation_exposure_fusion_enabled", False)))
+		self.exposureFusionProfileCombo.setCurrentText(str(getattr(obj, "presentation_exposure_fusion_profile", "balanced")))
+		self.exposureFusionStrengthSpin.setValue(float(getattr(obj, "presentation_exposure_fusion_strength", 0.85)))
 		self.overlayAnnotationsCheck.setChecked(bool(getattr(obj, "presentation_overlay_annotations", False)))
 		self.overlayLabelsCheck.setChecked(bool(getattr(obj, "presentation_overlay_labels", False)))
 		self.overlayCrossSizeSpin.setValue(int(getattr(obj, "presentation_overlay_cross_size_px", 6)))
@@ -626,6 +654,12 @@ class PropDetectorImage(FlowPanelMixin, PropWidget):
 		obj.presentation_robust_percentile = min(100.0, max(50.0, float(self.robustPercentileSpin.value())))
 		if obj.presentation_robust_percentile <= obj.presentation_robust_low_percentile:
 			obj.presentation_robust_percentile = min(100.0, obj.presentation_robust_low_percentile + 0.01)
+		obj.presentation_exposure_fusion_enabled = bool(self.exposureFusionCheck.isChecked())
+		obj.presentation_exposure_fusion_profile = str(self.exposureFusionProfileCombo.currentText()).strip().lower()
+		obj.presentation_exposure_fusion_strength = min(
+			1.0,
+			max(0.0, float(self.exposureFusionStrengthSpin.value())),
+		)
 		obj.presentation_overlay_annotations = bool(self.overlayAnnotationsCheck.isChecked())
 		obj.presentation_overlay_labels = bool(self.overlayLabelsCheck.isChecked())
 		obj.presentation_overlay_cross_size_px = max(1, int(self.overlayCrossSizeSpin.value()))

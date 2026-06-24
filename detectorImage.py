@@ -20,6 +20,7 @@ from .xray.xrayPresentation import (
 	DigitalRadiographyPresentationModel,
 	FilmLikePresentationModel,
 	RawPresentationModel,
+	fuse_exposure_stack,
 )
 
 
@@ -28,6 +29,7 @@ class DetectorImage(Object):
 
 	PACKAGE_SCHEMA = "virtRTG-detector-package"
 	PACKAGE_VERSION = 1
+	EXPOSURE_FUSION_PROFILES = ("balanced", "soft_tissue", "bone_preserving")
 
 	def __init__(self, parent=None, array=None, source_stage="raw"):
 		"""Initialize one hidden-in-3D detector image object."""
@@ -48,6 +50,9 @@ class DetectorImage(Object):
 		self.presentation_robust_percentile = 99.5
 		self.presentation_window_center = None
 		self.presentation_window_width = None
+		self.presentation_exposure_fusion_enabled = False
+		self.presentation_exposure_fusion_profile = "balanced"
+		self.presentation_exposure_fusion_strength = 0.85
 		self.presentation_overlay_annotations = False
 		self.presentation_overlay_labels = False
 		self.presentation_overlay_cross_size_px = 6
@@ -375,6 +380,98 @@ class DetectorImage(Object):
 			normalized = 1.0 - normalized
 		return normalized.astype(np.float32, copy=False)
 
+	def _effective_presented_range(self):
+		"""Return the current effective presentation range as `(lower, upper)`."""
+		center, width = self.effective_window()
+		lower = center - width / 2.0
+		upper = center + width / 2.0
+		if upper <= lower:
+			upper = lower + 1e-6
+		return float(lower), float(upper)
+
+	def _build_exposure_fusion_models(self):
+		"""Return presentation variants used by the optional exposure-fusion stage."""
+		if str(self.presentation_mode).lower() == "raw":
+			return [], {}
+		range_lower, range_upper = self._effective_presented_range()
+		range_width = max(range_upper - range_lower, 1e-6)
+		range_center = (range_lower + range_upper) / 2.0
+		profile_name = str(getattr(self, "presentation_exposure_fusion_profile", "balanced")).strip().lower()
+		if profile_name not in self.EXPOSURE_FUSION_PROFILES:
+			profile_name = "balanced"
+		if profile_name == "soft_tissue":
+			variant_specs = [
+				(range_center - 0.55 * range_width, 3.20 * range_width),
+				(range_center - 0.28 * range_width, 2.00 * range_width),
+				(range_center - 0.08 * range_width, 1.20 * range_width),
+				(range_center + 0.10 * range_width, 0.78 * range_width),
+			]
+			fusion_kwargs = {"sigma": 0.36, "contrast_boost": 1.8}
+		elif profile_name == "bone_preserving":
+			variant_specs = [
+				(range_center - 0.15 * range_width, 1.30 * range_width),
+				(range_center + 0.02 * range_width, 0.92 * range_width),
+				(range_center + 0.18 * range_width, 0.62 * range_width),
+				(range_center + 0.34 * range_width, 0.38 * range_width),
+			]
+			fusion_kwargs = {"sigma": 0.24, "contrast_boost": 2.6}
+		else:
+			variant_specs = [
+				(range_center - 0.40 * range_width, 2.60 * range_width),
+				(range_center - 0.18 * range_width, 1.70 * range_width),
+				(range_center, range_width),
+				(range_center + 0.18 * range_width, 0.70 * range_width),
+				(range_center + 0.34 * range_width, 0.42 * range_width),
+			]
+			fusion_kwargs = {"sigma": 0.32, "contrast_boost": 2.2}
+		mode = str(self.presentation_mode).lower()
+		models = []
+		for variant_center, variant_width in variant_specs:
+			if mode == "film":
+				variant_lower = variant_center - variant_width / 2.0
+				variant_upper = variant_center + variant_width / 2.0
+				models.append(FilmLikePresentationModel(
+					robust_low_percentile=self.presentation_robust_low_percentile,
+					robust_percentile=self.presentation_robust_percentile,
+					gamma=self.presentation_gamma,
+					contrast=self.presentation_contrast,
+					invert=self.presentation_invert,
+					fixed_range=(variant_lower, variant_upper),
+					input_transform=self.presentation_input_transform,
+					local_enhancement=self.presentation_local_enhancement,
+					clahe_clip_limit=self.presentation_clahe_clip_limit,
+					clahe_tile_grid_size=self.presentation_clahe_tile_grid_size,
+				))
+			else:
+				models.append(DigitalRadiographyPresentationModel(
+					window_center=variant_center,
+					window_width=max(variant_width, 1e-6),
+					robust_low_percentile=self.presentation_robust_low_percentile,
+					robust_percentile=self.presentation_robust_percentile,
+					invert=self.presentation_invert,
+					gamma=self.presentation_gamma,
+					contrast=self.presentation_contrast,
+					input_transform=self.presentation_input_transform,
+					local_enhancement=self.presentation_local_enhancement,
+					clahe_clip_limit=self.presentation_clahe_clip_limit,
+					clahe_tile_grid_size=self.presentation_clahe_tile_grid_size,
+				))
+		return models, fusion_kwargs
+
+	def _apply_optional_exposure_fusion(self, image, base_presented):
+		"""Optionally blend several presentation variants of the same detector signal."""
+		if not bool(self.presentation_exposure_fusion_enabled):
+			return np.asarray(base_presented, dtype=np.float32)
+		models, fusion_kwargs = self._build_exposure_fusion_models()
+		if not models:
+			return np.asarray(base_presented, dtype=np.float32)
+		exposures = [np.asarray(model.apply(image), dtype=np.float32) for model in models]
+		return fuse_exposure_stack(
+			np.stack(exposures, axis=0),
+			strength=self.presentation_exposure_fusion_strength,
+			**fusion_kwargs,
+		)
+
 	def get_presented_array(self):
 		"""Return the presentation-stage image before the optional transfer curve."""
 		if self.raw_array is None:
@@ -384,7 +481,7 @@ class DetectorImage(Object):
 		if mode == "raw":
 			return self._apply_raw_tone_controls(self._normalize_raw_window(image))
 		if mode == "film":
-			return FilmLikePresentationModel(
+			base_presented = FilmLikePresentationModel(
 				robust_low_percentile=self.presentation_robust_low_percentile,
 				robust_percentile=self.presentation_robust_percentile,
 				gamma=self.presentation_gamma,
@@ -395,7 +492,9 @@ class DetectorImage(Object):
 				clahe_clip_limit=self.presentation_clahe_clip_limit,
 				clahe_tile_grid_size=self.presentation_clahe_tile_grid_size,
 			).apply(image)
-		return self.build_presentation_model().apply(image)
+			return self._apply_optional_exposure_fusion(image, base_presented)
+		base_presented = self.build_presentation_model().apply(image)
+		return self._apply_optional_exposure_fusion(image, base_presented)
 
 	def set_transfer_points_pct(self, points):
 		"""Store one sorted transfer curve in percent coordinates."""
@@ -508,6 +607,21 @@ class DetectorImage(Object):
 		)
 		self.presentation_window_center = defaults.get("window_center", self.presentation_window_center)
 		self.presentation_window_width = defaults.get("window_width", self.presentation_window_width)
+		self.presentation_exposure_fusion_enabled = bool(
+			defaults.get("exposure_fusion_enabled", self.presentation_exposure_fusion_enabled)
+		)
+		self.presentation_exposure_fusion_profile = str(
+			defaults.get("exposure_fusion_profile", self.presentation_exposure_fusion_profile)
+		).strip().lower()
+		if self.presentation_exposure_fusion_profile not in self.EXPOSURE_FUSION_PROFILES:
+			self.presentation_exposure_fusion_profile = "balanced"
+		self.presentation_exposure_fusion_strength = min(
+			1.0,
+			max(
+				0.0,
+				float(defaults.get("exposure_fusion_strength", self.presentation_exposure_fusion_strength)),
+			),
+		)
 		self.presentation_overlay_annotations = bool(
 			defaults.get("overlay_annotations", self.presentation_overlay_annotations)
 		)
@@ -591,6 +705,9 @@ class DetectorImage(Object):
 			"robust_percentile": float(self.presentation_robust_percentile),
 			"window_center": self.presentation_window_center,
 			"window_width": self.presentation_window_width,
+			"exposure_fusion_enabled": bool(self.presentation_exposure_fusion_enabled),
+			"exposure_fusion_profile": str(self.presentation_exposure_fusion_profile),
+			"exposure_fusion_strength": float(self.presentation_exposure_fusion_strength),
 			"overlay_annotations": bool(self.presentation_overlay_annotations),
 			"overlay_labels": bool(self.presentation_overlay_labels),
 			"overlay_cross_size_px": int(self.presentation_overlay_cross_size_px),
