@@ -1,0 +1,8 @@
+# Runtime dependencies used by virtRTG. These overlap with the pyDpVision core
+# requirements, but keeping them here lets the plugin declare its own contract.
+numpy>=2.2.4
+opencv-python>=4.11.0.86
+pydicom>=3.0.1
+scipy
+PyOpenGL>=3.1.9
+PyQt5>=5.15.11
