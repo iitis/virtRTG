@@ -6,3 +6,4 @@ pydicom>=3.0.1
 scipy
 PyOpenGL>=3.1.9
 PyQt5>=5.15.11
+websockets>=14.0

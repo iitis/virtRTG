@@ -27,6 +27,10 @@ class VirtualRTG(PluginInterface):
 		self.plugin_name = 'Virtual RTG'
 		self.panel = None
 		self.setup = None
+		self._device_server = None
+		self._device_link = None
+		self._device_server_status_action = None
+		self._device_geometry_status_action = None
 		self._context_menu_factory = self._create_virtual_xray_context_menu
 		AP.mainWin.dock["properties"].properties_map[Object]['VirtualXRay'] = PropVirtualXRay
 		AP.mainWin.dock["properties"].properties_map[Object]['DetectorImage'] = PropDetectorImage
@@ -40,6 +44,14 @@ class VirtualRTG(PluginInterface):
 		
 		# self.mainWindow.helpAbout()
 		self.add_menu()
+		from .device_link.integration import DeviceLinkIntegration
+		from .device_link.server import DeviceServer
+		self._device_link = DeviceLinkIntegration(self)
+		self._device_server = DeviceServer(
+			self._device_link.signals.geometry_received.emit,
+			self._device_link.signals.status_changed.emit,
+		)
+		AP.mainApp.aboutToQuit.connect(self._stop_device_server)
 		# self.create_panel(AP.mainWin)
 
 	def create_panel(self, parent):
@@ -48,6 +60,16 @@ class VirtualRTG(PluginInterface):
 		AP.mainWin.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.panel)
 
 	def on_unload(self):
+		try:
+			AP.mainApp.aboutToQuit.disconnect(self._stop_device_server)
+		except (TypeError, RuntimeError):
+			pass
+		if self._device_link is not None:
+			self._device_link.disconnect()
+		if self._device_server is not None:
+			self._device_server.stop()
+		self._device_server = None
+		self._device_link = None
 		unregister_atmdl_integration()
 		self.remove_menu()
 		ContextMenu.unregister_extra_menu_factory(self._context_menu_factory)
@@ -86,6 +108,22 @@ class VirtualRTG(PluginInterface):
 		action = QAction("Benchmark", AP.mainWin)
 		self.menu.addAction(action)
 		action.triggered.connect(self.onAction_Benchmark)
+
+		self.menu.addSeparator()
+		action = QAction("Start Device Server", AP.mainWin)
+		self.menu.addAction(action)
+		action.triggered.connect(self._start_device_server)
+
+		action = QAction("Stop Device Server", AP.mainWin)
+		self.menu.addAction(action)
+		action.triggered.connect(self._stop_device_server)
+
+		self._device_server_status_action = QAction("Server status: disabled", AP.mainWin)
+		self._device_server_status_action.setEnabled(False)
+		self.menu.addAction(self._device_server_status_action)
+		self._device_geometry_status_action = QAction("Device geometry: waiting", AP.mainWin)
+		self._device_geometry_status_action.setEnabled(False)
+		self.menu.addAction(self._device_geometry_status_action)
 
 		self.menu.addSeparator()
 
@@ -280,6 +318,42 @@ class VirtualRTG(PluginInterface):
 		from .benchmark import benchmark_xray_performance, generate_latex_benchmark_report
 		_bm_results, _diff_stats = benchmark_xray_performance()
 		generate_latex_benchmark_report(_bm_results, diff_stats=_diff_stats)
+
+	def _start_device_server(self, *_args):
+		if self._device_server is None:
+			return
+		self._device_server.start()
+
+	def _stop_device_server(self, *_args):
+		if self._device_server is not None:
+			self._device_server.stop()
+
+	def _on_device_server_status(self, state, detail=""):
+		labels = {"stopped": "stopped", "starting": "starting", "running": "running",
+			"stopping": "stopping", "error": "error"}
+		if state in labels and self._device_server_status_action is not None:
+			label = "disabled" if state == "stopped" else labels[state]
+			self._device_server_status_action.setText(
+				f"Server status: {label}" + (f" ({detail})" if detail else ""))
+		geometry_labels = {"no-target": "no VirtualXRay selected", "invalid-geometry": "invalid geometry",
+			"geometry-applied": "geometry applied"}
+		if state in geometry_labels and self._device_geometry_status_action is not None:
+			label = geometry_labels[state]
+			self._device_geometry_status_action.setText(
+				f"Device geometry: {label}" + (f" ({detail})" if detail else ""))
+		if state in {"error", "no-target", "invalid-geometry"}:
+			print(f"virtRTG device server [{state}]: {detail}")
+
+	def selected_virtual_xray(self):
+		"""Return the uniquely selected VirtualXRay scene object, if any."""
+		from .virtualXRay import VirtualXRay
+		selected = AP.mainWin.dock["workspace"].getSelectedObjects()
+		matches = [obj for obj in selected if isinstance(obj, VirtualXRay)]
+		return matches[0] if len(selected) == 1 and len(matches) == 1 else None
+
+	def refresh_virtual_xray(self, virtual_xray):
+		"""Refresh scene views after GUI-thread geometry fields have been updated."""
+		AP.updateAllViews()
 
 
 	def perform_action(self):
