@@ -1,5 +1,9 @@
 # virtRTG Device Simulator Integration 0.4.0
 
+Status: accepted and committed as the current implementation baseline in commit `e628383` (`dodana komunikacja z symulatorem`), subject to subsequent manual GUI verification.
+
+The verification below records automated and offscreen checks only. A real-browser session and mouse-driven workspace selection have not been confirmed.
+
 ## Files changed
 
 - `device_link/device_adapter.py`: transferred protocol-v1 validation, state dataclasses, acknowledgement handling, projection references, and diagnostics from `D:/current/virtualrtg-console/device_adapter.py` (accepted 0.3.1).
