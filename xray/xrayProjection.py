@@ -166,6 +166,7 @@ class XRayProjectionGeometry:
 	depth_window_origin_ref: Sequence[float] | None = None
 	depth_window_axis_ref: Sequence[float] | None = None
 
+
 	@classmethod
 	def from_detector_pose(
 		cls,
@@ -344,6 +345,66 @@ class XRayProjectionGeometry:
 		if depth_mode == "planar":
 			if np.linalg.norm(np.asarray(self.effective_depth_window_axis_ref(), dtype=np.float32)) <= 1e-8:
 				raise ValueError("depth_window_axis_ref must have a non-zero length for planar depth windows.")
+
+
+@dataclass(frozen=True)
+class RectangularBeamGeometry:
+	"""Ideal divergent rectangular beam frame in millimeters.
+
+	The field dimensions are full widths at ``field_reference_distance_mm``.
+	This value object is descriptive only; projection integrators do not use it.
+	"""
+
+	beam_axis_ref: Sequence[float]
+	beam_horizontal_ref: Sequence[float]
+	beam_vertical_ref: Sequence[float]
+	field_width_cm: float
+	field_height_cm: float
+	field_reference_distance_mm: float
+
+	def __post_init__(self):
+		def unit(value, label):
+			vector = np.asarray(value, dtype=np.float64)
+			if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+				raise ValueError(f"{label} must be a finite three-vector")
+			norm = float(np.linalg.norm(vector))
+			if not np.isfinite(norm) or norm <= 1e-12:
+				raise ValueError(f"{label} must have nonzero length")
+			return vector / norm
+		axis = unit(self.beam_axis_ref, "beam axis")
+		horizontal = unit(self.beam_horizontal_ref, "beam horizontal axis")
+		vertical = unit(self.beam_vertical_ref, "beam vertical axis")
+		if abs(float(np.dot(axis, horizontal))) > 1e-7 or abs(float(np.dot(axis, vertical))) > 1e-7 or abs(float(np.dot(horizontal, vertical))) > 1e-7:
+			raise ValueError("beam axes must be orthogonal")
+		if float(np.dot(np.cross(horizontal, vertical), axis)) < 1.0 - 1e-7:
+			raise ValueError("beam frame must be right-handed (horizontal x vertical = axis)")
+		for name in ("field_width_cm", "field_height_cm", "field_reference_distance_mm"):
+			if isinstance(getattr(self, name), bool):
+				raise ValueError(f"{name} must be finite and positive")
+			value = float(getattr(self, name))
+			if not np.isfinite(value) or value <= 0:
+				raise ValueError(f"{name} must be finite and positive")
+			object.__setattr__(self, name, value)
+		object.__setattr__(self, "beam_axis_ref", tuple(float(v) for v in axis))
+		object.__setattr__(self, "beam_horizontal_ref", tuple(float(v) for v in horizontal))
+		object.__setattr__(self, "beam_vertical_ref", tuple(float(v) for v in vertical))
+
+	def contains_point(self, focal_spot_ref, point_ref) -> bool:
+		"""Return whether a point is in the forward rectangular divergent beam."""
+		source = np.asarray(focal_spot_ref, dtype=np.float64)
+		point = np.asarray(point_ref, dtype=np.float64)
+		if source.shape != (3,) or point.shape != (3,) or not np.all(np.isfinite(source)) or not np.all(np.isfinite(point)):
+			raise ValueError("focal spot and point must be finite three-vectors")
+		r = point - source
+		t = float(np.dot(r, self.beam_axis_ref))
+		if t <= 0.0:
+			return False
+		return (abs(float(np.dot(r, self.beam_horizontal_ref))) <= t * self.field_width_cm * 5.0 / self.field_reference_distance_mm
+				and abs(float(np.dot(r, self.beam_vertical_ref))) <= t * self.field_height_cm * 5.0 / self.field_reference_distance_mm)
+
+	def contains_ray(self, ray_direction_ref) -> bool:
+		"""Return whether a ray direction from the focal spot falls in the beam."""
+		return self.contains_point((0.0, 0.0, 0.0), ray_direction_ref)
 
 
 @dataclass

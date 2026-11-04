@@ -15,6 +15,15 @@ from .device_adapter import DeviceState, _add, _norm, _rotate_xyz, _sub
 IDENTITY_4 = ((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0),
              (0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0))
 
+# Current demonstrator construction geometry; these can be supplied by a
+# future device profile without changing the mapping mathematics.
+TUBE_FOCAL_SPOT_OFFSET_M = (0.0, -0.43, 0.0)
+TUBE_EMISSION_AXIS = (0.0, -1.0, 0.0)
+TUBE_BEAM_HORIZONTAL = (1.0, 0.0, 0.0)
+TUBE_BEAM_VERTICAL = (0.0, 0.0, 1.0)
+DETECTOR_ACTIVE_CENTER_OFFSET_M = (0.0, 0.04, 0.0)
+COLLIMATION_REFERENCE_DISTANCE_MM = 1000.0
+
 
 def _validate_rigid(transform: Sequence[Sequence[float]]) -> tuple[tuple[float, ...], ...]:
     """Validate and normalize a rigid T_RS matrix whose translation is in mm."""
@@ -105,8 +114,11 @@ def map_device_geometry(state: DeviceState, t_rs: Sequence[Sequence[float]] = ID
         in_s = _rotate_xyz(axis, pose.rotation_rad)
         return _unit(_rotate_mm(transform, in_s))
 
-    source = point_for(tube, (0.0, -0.43, 0.0))
-    center = point_for(detector, (0.0, 0.04, 0.0))
+    source = point_for(tube, TUBE_FOCAL_SPOT_OFFSET_M)
+    beam_axis = direction_for(tube, TUBE_EMISSION_AXIS)
+    beam_horizontal = direction_for(tube, TUBE_BEAM_HORIZONTAL)
+    beam_vertical = direction_for(tube, TUBE_BEAM_VERTICAL)
+    center = point_for(detector, DETECTOR_ACTIVE_CENTER_OFFSET_M)
     browser_horizontal = direction_for(detector, (1.0, 0.0, 0.0))
     browser_up = direction_for(detector, (0.0, 0.0, 1.0))
     browser_normal = direction_for(detector, (0.0, 1.0, 0.0))
@@ -128,6 +140,12 @@ def map_device_geometry(state: DeviceState, t_rs: Sequence[Sequence[float]] = ID
     phantom = state.poses["phantom"]
     return {
         "source_position_ref": source,
+        "beam_axis_ref": beam_axis,
+        "beam_horizontal_ref": beam_horizontal,
+        "beam_vertical_ref": beam_vertical,
+        "field_width_cm": state.collimator.width_cm,
+        "field_height_cm": state.collimator.height_cm,
+        "field_reference_distance_mm": COLLIMATION_REFERENCE_DISTANCE_MM,
         "detector_center_ref": center,
         "detector_normal_ref": plugin_normal,
         "detector_up_ref": browser_up,

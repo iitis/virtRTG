@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import socket
 import threading
@@ -323,6 +324,57 @@ def test_failed_geometry_rebuild_restores_inputs_and_build_backfills(qapp, monke
 	for name in ("depth_window_mm", "depth_window_origin_ref", "depth_window_axis_ref", "motion_frame_mode"):
 		assert not hasattr(virtual_xray, name)
 	assert not plugin.refreshes
+	bridge.disconnect()
+
+
+def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp, monkeypatch):
+	from plugins.virtRTG.device_link.device_adapter import DeviceState
+	from plugins.virtRTG.virtualXRay import VirtualXRay
+	from plugins.virtRTG.xray.xrayProjection import XRayProjectionGeometry
+
+	virtual_xray = VirtualXRay()
+	plugin = FakePlugin(virtual_xray)
+	bridge = DeviceLinkIntegration(plugin)
+	projection_calls = []
+	monkeypatch.setattr(virtual_xray, "project_and_cache", lambda *args, **kwargs: projection_calls.append((args, kwargs)))
+
+	state = DeviceState()
+	bridge.signals.geometry_received.emit(state.to_dict())
+	assert wait_qt(qapp, lambda: len(plugin.refreshes) == 1)
+	initial_beam = virtual_xray.directional_beam_geometry
+	assert initial_beam is not None
+	assert initial_beam.beam_axis_ref == (0.0, -1.0, 0.0)
+	assert initial_beam.field_width_cm == state.collimator.width_cm
+	assert initial_beam.field_height_cm == state.collimator.height_cm
+	initial_detector = tuple(getattr(virtual_xray, name).copy() for name in (
+		"detector_center_ref", "detector_normal_ref", "detector_up_ref"))
+
+	state.poses["tube"].rotation_rad = (0.0, 0.0, math.pi / 2.0)
+	bridge.signals.geometry_received.emit(state.to_dict())
+	assert wait_qt(qapp, lambda: len(plugin.refreshes) == 2)
+	rotated_beam = virtual_xray.directional_beam_geometry
+	assert rotated_beam.beam_axis_ref[0] == pytest.approx(1.0)
+	assert rotated_beam.beam_axis_ref[1] == pytest.approx(0.0, abs=1e-7)
+	for name, expected in zip(("detector_center_ref", "detector_normal_ref", "detector_up_ref"), initial_detector):
+		assert np_allclose(getattr(virtual_xray, name), expected)
+	assert virtual_xray.last_raw_projection is None
+	assert not projection_calls
+
+	attrs = ("source_position_ref", "detector_center_ref", "detector_normal_ref", "detector_up_ref")
+	before_failure = {name: getattr(virtual_xray, name).copy() for name in attrs}
+	beam_before_failure = virtual_xray.directional_beam_geometry
+	refresh_count = len(plugin.refreshes)
+	monkeypatch.setattr(XRayProjectionGeometry, "from_detector_pose",
+		lambda **_kwargs: (_ for _ in ()).throw(ValueError("rebuild failed")))
+	state.poses["tube"].rotation_rad = (0.0, 0.0, math.pi)
+	bridge.signals.geometry_received.emit(state.to_dict())
+	assert wait_qt(qapp, lambda: plugin.status[-1][0] == "invalid-geometry")
+	for name, expected in before_failure.items():
+		assert np_allclose(getattr(virtual_xray, name), expected)
+	assert virtual_xray.directional_beam_geometry is beam_before_failure
+	assert len(plugin.refreshes) == refresh_count
+	assert virtual_xray.last_raw_projection is None
+	assert not projection_calls
 	bridge.disconnect()
 
 

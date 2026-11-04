@@ -1,0 +1,228 @@
+diff --git a/device_link/integration.py b/device_link/integration.py
+index 6e004e1..1cac053 100644
+--- a/device_link/integration.py
++++ b/device_link/integration.py
+@@ -10,0 +11 @@ from .virtualrtg_geometry import map_device_geometry
++from ..xray.xrayProjection import RectangularBeamGeometry
+@@ -88,0 +90 @@ class DeviceLinkIntegration(QObject):
++		previous_beam = getattr(virtual_xray, "directional_beam_geometry", None)
+@@ -92,0 +95,3 @@ class DeviceLinkIntegration(QObject):
++			virtual_xray.directional_beam_geometry = RectangularBeamGeometry(
++				geometry["beam_axis_ref"], geometry["beam_horizontal_ref"], geometry["beam_vertical_ref"],
++				geometry["field_width_cm"], geometry["field_height_cm"], geometry["field_reference_distance_mm"])
+@@ -96,0 +102 @@ class DeviceLinkIntegration(QObject):
++			virtual_xray.directional_beam_geometry = previous_beam
+diff --git a/device_link/virtualrtg_geometry.py b/device_link/virtualrtg_geometry.py
+index 047bb9c..eabe602 100644
+--- a/device_link/virtualrtg_geometry.py
++++ b/device_link/virtualrtg_geometry.py
+@@ -17,0 +18,9 @@ IDENTITY_4 = ((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0),
++# Current demonstrator construction geometry; these can be supplied by a
++# future device profile without changing the mapping mathematics.
++TUBE_FOCAL_SPOT_OFFSET_M = (0.0, -0.43, 0.0)
++TUBE_EMISSION_AXIS = (0.0, -1.0, 0.0)
++TUBE_BEAM_HORIZONTAL = (1.0, 0.0, 0.0)
++TUBE_BEAM_VERTICAL = (0.0, 0.0, 1.0)
++DETECTOR_ACTIVE_CENTER_OFFSET_M = (0.0, 0.04, 0.0)
++COLLIMATION_REFERENCE_DISTANCE_MM = 1000.0
++
+@@ -108,2 +117,5 @@ def map_device_geometry(state: DeviceState, t_rs: Sequence[Sequence[float]] = ID
+-    source = point_for(tube, (0.0, -0.43, 0.0))
+-    center = point_for(detector, (0.0, 0.04, 0.0))
++    source = point_for(tube, TUBE_FOCAL_SPOT_OFFSET_M)
++    beam_axis = direction_for(tube, TUBE_EMISSION_AXIS)
++    beam_horizontal = direction_for(tube, TUBE_BEAM_HORIZONTAL)
++    beam_vertical = direction_for(tube, TUBE_BEAM_VERTICAL)
++    center = point_for(detector, DETECTOR_ACTIVE_CENTER_OFFSET_M)
+@@ -130,0 +143,6 @@ def map_device_geometry(state: DeviceState, t_rs: Sequence[Sequence[float]] = ID
++        "beam_axis_ref": beam_axis,
++        "beam_horizontal_ref": beam_horizontal,
++        "beam_vertical_ref": beam_vertical,
++        "field_width_cm": state.collimator.width_cm,
++        "field_height_cm": state.collimator.height_cm,
++        "field_reference_distance_mm": COLLIMATION_REFERENCE_DISTANCE_MM,
+diff --git a/tests/unit/device_link/test_device_server.py b/tests/unit/device_link/test_device_server.py
+index ccf5393..9acd4ca 100644
+--- a/tests/unit/device_link/test_device_server.py
++++ b/tests/unit/device_link/test_device_server.py
+@@ -5,0 +6 @@ import json
++import math
+@@ -328,0 +330,51 @@ def test_failed_geometry_rebuild_restores_inputs_and_build_backfills(qapp, monke
++def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp, monkeypatch):
++	from plugins.virtRTG.device_link.device_adapter import DeviceState
++	from plugins.virtRTG.virtualXRay import VirtualXRay
++	from plugins.virtRTG.xray.xrayProjection import XRayProjectionGeometry
++
++	virtual_xray = VirtualXRay()
++	plugin = FakePlugin(virtual_xray)
++	bridge = DeviceLinkIntegration(plugin)
++	projection_calls = []
++	monkeypatch.setattr(virtual_xray, "project_and_cache", lambda *args, **kwargs: projection_calls.append((args, kwargs)))
++
++	state = DeviceState()
++	bridge.signals.geometry_received.emit(state.to_dict())
++	assert wait_qt(qapp, lambda: len(plugin.refreshes) == 1)
++	initial_beam = virtual_xray.directional_beam_geometry
++	assert initial_beam is not None
++	assert initial_beam.beam_axis_ref == (0.0, -1.0, 0.0)
++	assert initial_beam.field_width_cm == state.collimator.width_cm
++	assert initial_beam.field_height_cm == state.collimator.height_cm
++	initial_detector = tuple(getattr(virtual_xray, name).copy() for name in (
++		"detector_center_ref", "detector_normal_ref", "detector_up_ref"))
++
++	state.poses["tube"].rotation_rad = (0.0, 0.0, math.pi / 2.0)
++	bridge.signals.geometry_received.emit(state.to_dict())
++	assert wait_qt(qapp, lambda: len(plugin.refreshes) == 2)
++	rotated_beam = virtual_xray.directional_beam_geometry
++	assert rotated_beam.beam_axis_ref[0] == pytest.approx(1.0)
++	assert rotated_beam.beam_axis_ref[1] == pytest.approx(0.0, abs=1e-7)
++	for name, expected in zip(("detector_center_ref", "detector_normal_ref", "detector_up_ref"), initial_detector):
++		assert np_allclose(getattr(virtual_xray, name), expected)
++	assert virtual_xray.last_raw_projection is None
++	assert not projection_calls
++
++	attrs = ("source_position_ref", "detector_center_ref", "detector_normal_ref", "detector_up_ref")
++	before_failure = {name: getattr(virtual_xray, name).copy() for name in attrs}
++	beam_before_failure = virtual_xray.directional_beam_geometry
++	refresh_count = len(plugin.refreshes)
++	monkeypatch.setattr(XRayProjectionGeometry, "from_detector_pose",
++		lambda **_kwargs: (_ for _ in ()).throw(ValueError("rebuild failed")))
++	state.poses["tube"].rotation_rad = (0.0, 0.0, math.pi)
++	bridge.signals.geometry_received.emit(state.to_dict())
++	assert wait_qt(qapp, lambda: plugin.status[-1][0] == "invalid-geometry")
++	for name, expected in before_failure.items():
++		assert np_allclose(getattr(virtual_xray, name), expected)
++	assert virtual_xray.directional_beam_geometry is beam_before_failure
++	assert len(plugin.refreshes) == refresh_count
++	assert virtual_xray.last_raw_projection is None
++	assert not projection_calls
++	bridge.disconnect()
++
++
+diff --git a/tests/unit/device_link/test_virtualrtg_geometry.py b/tests/unit/device_link/test_virtualrtg_geometry.py
+index b776c73..f77ea1a 100644
+--- a/tests/unit/device_link/test_virtualrtg_geometry.py
++++ b/tests/unit/device_link/test_virtualrtg_geometry.py
+@@ -6,0 +7 @@ from plugins.virtRTG.device_link.virtualrtg_geometry import IDENTITY_4, map_devi
++from plugins.virtRTG.xray.xrayProjection import RectangularBeamGeometry
+@@ -22,0 +24,47 @@ class VirtualXRayGeometryTests(unittest.TestCase):
++    def test_directional_beam_tracks_tube_and_collimation_not_detector(self):
++        state = DeviceState()
++        geometry = map_device_geometry(state)
++        self.assertEqual(geometry["beam_axis_ref"], (0.0, -1.0, 0.0))
++        self.assertEqual(geometry["beam_horizontal_ref"], (1.0, 0.0, 0.0))
++        self.assertEqual(geometry["beam_vertical_ref"], (0.0, 0.0, 1.0))
++        beam = RectangularBeamGeometry(geometry["beam_axis_ref"], geometry["beam_horizontal_ref"],
++                                       geometry["beam_vertical_ref"], 24, 30, 1000)
++        self.assertTrue(beam.contains_point((0, 0, 0), (120, -1000, 150)))
++        self.assertFalse(beam.contains_point((0, 0, 0), (121, -1000, 0)))
++        self.assertFalse(beam.contains_point((0, 0, 0), (0, 1, 0)))
++        self.assertTrue(beam.contains_ray((0.1, -1, 0.1)))
++        self.assertFalse(beam.contains_ray((0.13, -1, 0)))
++        self.assertAlmostEqual(geometry["field_reference_distance_mm"], 1000)
++
++        source_before = geometry["source_position_ref"]
++        state.poses["tube"] = Pose((0.2, 0.3, 0.4), (0.0, 0.0, math.pi))
++        rotated = map_device_geometry(state)
++        self.assertAlmostEqual(rotated["beam_axis_ref"][1], 1.0, places=7)
++        self.assertAlmostEqual(rotated["beam_horizontal_ref"][0], -1.0, places=7)
++        self.assertNotEqual(rotated["source_position_ref"], source_before)
++        state.poses["detector"] = Pose((9, 8, 7), (1.1, -0.4, 0.7))
++        moved_detector = map_device_geometry(state)
++        self.assertEqual(moved_detector["beam_axis_ref"], rotated["beam_axis_ref"])
++        self.assertNotEqual(tuple(moved_detector["beam_axis_ref"]), tuple(
++            (moved_detector["detector_center_ref"][i] - moved_detector["source_position_ref"][i]) for i in range(3)))
++
++    def test_directional_beam_rigid_mapping_and_invalid_values(self):
++        state = DeviceState()
++        set_pose(state, "tube", (0, 0, 0), (0, 0, 90))
++        transform = ((0, 0, 1, 12), (0, 1, 0, -5), (-1, 0, 0, 7), (0, 0, 0, 1))
++        mapped = map_device_geometry(state, transform)
++        self.assertAlmostEqual(mapped["beam_axis_ref"][2], -1.0, places=7)
++        self.assertAlmostEqual(mapped["beam_axis_ref"][0], 0.0, places=7)
++        beam = RectangularBeamGeometry(mapped["beam_axis_ref"], mapped["beam_horizontal_ref"],
++                                       mapped["beam_vertical_ref"], 20, 15, 1000)
++        self.assertTrue(beam.contains_point(mapped["source_position_ref"],
++                                            tuple(mapped["source_position_ref"][i] + mapped["beam_axis_ref"][i] * 1000 for i in range(3))))
++        for args in (
++            ((0, 0, 0), (0, 0, 0), (0, 0, 1), 20, 15, 1000),
++            ((0, -1, 0), (1, 0, 0), (0, 0, -1), 20, 15, 1000),
++            ((0, -1, 0), (1, 0, 0), (0, 0, 1), float("nan"), 15, 1000),
++            ((0, -1, 0), (float("inf"), 0, 0), (0, 0, 1), 20, 15, 1000),
++        ):
++            with self.assertRaises(ValueError):
++                RectangularBeamGeometry(*args)
++
+diff --git a/virtualXRay.py b/virtualXRay.py
+index 815f7e7..0a064a3 100644
+--- a/virtualXRay.py
++++ b/virtualXRay.py
+@@ -212,0 +213 @@ class VirtualXRay(Object):
++		self.directional_beam_geometry = None
+diff --git a/xray/xrayProjection.py b/xray/xrayProjection.py
+index 6c57817..0c13535 100644
+--- a/xray/xrayProjection.py
++++ b/xray/xrayProjection.py
+@@ -168,0 +169 @@ class XRayProjectionGeometry:
++
+@@ -348,0 +350,60 @@ class XRayProjectionGeometry:
++@dataclass(frozen=True)
++class RectangularBeamGeometry:
++	"""Ideal divergent rectangular beam frame in millimeters.
++
++	The field dimensions are full widths at ``field_reference_distance_mm``.
++	This value object is descriptive only; projection integrators do not use it.
++	"""
++
++	beam_axis_ref: Sequence[float]
++	beam_horizontal_ref: Sequence[float]
++	beam_vertical_ref: Sequence[float]
++	field_width_cm: float
++	field_height_cm: float
++	field_reference_distance_mm: float
++
++	def __post_init__(self):
++		def unit(value, label):
++			vector = np.asarray(value, dtype=np.float64)
++			if vector.shape != (3,) or not np.all(np.isfinite(vector)):
++				raise ValueError(f"{label} must be a finite three-vector")
++			norm = float(np.linalg.norm(vector))
++			if not np.isfinite(norm) or norm <= 1e-12:
++				raise ValueError(f"{label} must have nonzero length")
++			return vector / norm
++		axis = unit(self.beam_axis_ref, "beam axis")
++		horizontal = unit(self.beam_horizontal_ref, "beam horizontal axis")
++		vertical = unit(self.beam_vertical_ref, "beam vertical axis")
++		if abs(float(np.dot(axis, horizontal))) > 1e-7 or abs(float(np.dot(axis, vertical))) > 1e-7 or abs(float(np.dot(horizontal, vertical))) > 1e-7:
++			raise ValueError("beam axes must be orthogonal")
++		if float(np.dot(np.cross(horizontal, vertical), axis)) < 1.0 - 1e-7:
++			raise ValueError("beam frame must be right-handed (horizontal x vertical = axis)")
++		for name in ("field_width_cm", "field_height_cm", "field_reference_distance_mm"):
++			if isinstance(getattr(self, name), bool):
++				raise ValueError(f"{name} must be finite and positive")
++			value = float(getattr(self, name))
++			if not np.isfinite(value) or value <= 0:
++				raise ValueError(f"{name} must be finite and positive")
++			object.__setattr__(self, name, value)
++		object.__setattr__(self, "beam_axis_ref", tuple(float(v) for v in axis))
++		object.__setattr__(self, "beam_horizontal_ref", tuple(float(v) for v in horizontal))
++		object.__setattr__(self, "beam_vertical_ref", tuple(float(v) for v in vertical))
++
++	def contains_point(self, focal_spot_ref, point_ref) -> bool:
++		"""Return whether a point is in the forward rectangular divergent beam."""
++		source = np.asarray(focal_spot_ref, dtype=np.float64)
++		point = np.asarray(point_ref, dtype=np.float64)
++		if source.shape != (3,) or point.shape != (3,) or not np.all(np.isfinite(source)) or not np.all(np.isfinite(point)):
++			raise ValueError("focal spot and point must be finite three-vectors")
++		r = point - source
++		t = float(np.dot(r, self.beam_axis_ref))
++		if t <= 0.0:
++			return False
++		return (abs(float(np.dot(r, self.beam_horizontal_ref))) <= t * self.field_width_cm * 5.0 / self.field_reference_distance_mm
++				and abs(float(np.dot(r, self.beam_vertical_ref))) <= t * self.field_height_cm * 5.0 / self.field_reference_distance_mm)
++
++	def contains_ray(self, ray_direction_ref) -> bool:
++		"""Return whether a ray direction from the focal spot falls in the beam."""
++		return self.contains_point((0.0, 0.0, 0.0), ray_direction_ref)
++
++

@@ -210,6 +210,7 @@ class VirtualXRay(Object):
 		self.source_position_ref = np.array([0.0, 0.0, -220.0], dtype=np.float32)
 		self.ray_direction_ref = np.array([0.0, 0.0, 1.0], dtype=np.float32)
 		self.projection_mode = "cone"
+		self.directional_beam_geometry = None
 		self.motion_frame_mode = "active"
 		self.step_mm = 1.0
 		self.depth_window_mode = "off"

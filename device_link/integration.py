@@ -8,6 +8,7 @@ from PyQt5.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
 
 from .device_adapter import DeviceState
 from .virtualrtg_geometry import map_device_geometry
+from ..xray.xrayProjection import RectangularBeamGeometry
 
 
 _BUILD_GEOMETRY_BACKFILLS = (
@@ -86,14 +87,19 @@ class DeviceLinkIntegration(QObject):
 
 		attributes = ("source_position_ref", "detector_center_ref", "detector_normal_ref", "detector_up_ref")
 		previous = {name: getattr(virtual_xray, name).copy() for name in attributes}
+		previous_beam = getattr(virtual_xray, "directional_beam_geometry", None)
 		backfills = _snapshot_build_geometry_backfills(virtual_xray)
 		try:
 			for name in attributes:
 				setattr(virtual_xray, name, np.asarray(geometry[name], dtype=np.float32))
+			virtual_xray.directional_beam_geometry = RectangularBeamGeometry(
+				geometry["beam_axis_ref"], geometry["beam_horizontal_ref"], geometry["beam_vertical_ref"],
+				geometry["field_width_cm"], geometry["field_height_cm"], geometry["field_reference_distance_mm"])
 			virtual_xray.build_geometry()
 		except Exception as exc:
 			for name, value in previous.items():
 				setattr(virtual_xray, name, value)
+			virtual_xray.directional_beam_geometry = previous_beam
 			_restore_build_geometry_backfills(virtual_xray, backfills)
 			self.plugin._on_device_server_status("invalid-geometry", f"Accepted state retained; VirtualXRay geometry rejected: {exc}")
 			return

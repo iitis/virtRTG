@@ -4,6 +4,7 @@ import unittest
 
 from plugins.virtRTG.device_link.device_adapter import DeviceState, Pose
 from plugins.virtRTG.device_link.virtualrtg_geometry import IDENTITY_4, map_device_geometry, plugin_geometry_arguments
+from plugins.virtRTG.xray.xrayProjection import RectangularBeamGeometry
 
 
 def set_pose(state, name, position_mm, rotation_deg=(0, 0, 0)):
@@ -20,6 +21,53 @@ def cross(a, b):
 
 
 class VirtualXRayGeometryTests(unittest.TestCase):
+    def test_directional_beam_tracks_tube_and_collimation_not_detector(self):
+        state = DeviceState()
+        geometry = map_device_geometry(state)
+        self.assertEqual(geometry["beam_axis_ref"], (0.0, -1.0, 0.0))
+        self.assertEqual(geometry["beam_horizontal_ref"], (1.0, 0.0, 0.0))
+        self.assertEqual(geometry["beam_vertical_ref"], (0.0, 0.0, 1.0))
+        beam = RectangularBeamGeometry(geometry["beam_axis_ref"], geometry["beam_horizontal_ref"],
+                                       geometry["beam_vertical_ref"], 24, 30, 1000)
+        self.assertTrue(beam.contains_point((0, 0, 0), (120, -1000, 150)))
+        self.assertFalse(beam.contains_point((0, 0, 0), (121, -1000, 0)))
+        self.assertFalse(beam.contains_point((0, 0, 0), (0, 1, 0)))
+        self.assertTrue(beam.contains_ray((0.1, -1, 0.1)))
+        self.assertFalse(beam.contains_ray((0.13, -1, 0)))
+        self.assertAlmostEqual(geometry["field_reference_distance_mm"], 1000)
+
+        source_before = geometry["source_position_ref"]
+        state.poses["tube"] = Pose((0.2, 0.3, 0.4), (0.0, 0.0, math.pi))
+        rotated = map_device_geometry(state)
+        self.assertAlmostEqual(rotated["beam_axis_ref"][1], 1.0, places=7)
+        self.assertAlmostEqual(rotated["beam_horizontal_ref"][0], -1.0, places=7)
+        self.assertNotEqual(rotated["source_position_ref"], source_before)
+        state.poses["detector"] = Pose((9, 8, 7), (1.1, -0.4, 0.7))
+        moved_detector = map_device_geometry(state)
+        self.assertEqual(moved_detector["beam_axis_ref"], rotated["beam_axis_ref"])
+        self.assertNotEqual(tuple(moved_detector["beam_axis_ref"]), tuple(
+            (moved_detector["detector_center_ref"][i] - moved_detector["source_position_ref"][i]) for i in range(3)))
+
+    def test_directional_beam_rigid_mapping_and_invalid_values(self):
+        state = DeviceState()
+        set_pose(state, "tube", (0, 0, 0), (0, 0, 90))
+        transform = ((0, 0, 1, 12), (0, 1, 0, -5), (-1, 0, 0, 7), (0, 0, 0, 1))
+        mapped = map_device_geometry(state, transform)
+        self.assertAlmostEqual(mapped["beam_axis_ref"][2], -1.0, places=7)
+        self.assertAlmostEqual(mapped["beam_axis_ref"][0], 0.0, places=7)
+        beam = RectangularBeamGeometry(mapped["beam_axis_ref"], mapped["beam_horizontal_ref"],
+                                       mapped["beam_vertical_ref"], 20, 15, 1000)
+        self.assertTrue(beam.contains_point(mapped["source_position_ref"],
+                                            tuple(mapped["source_position_ref"][i] + mapped["beam_axis_ref"][i] * 1000 for i in range(3))))
+        for args in (
+            ((0, 0, 0), (0, 0, 0), (0, 0, 1), 20, 15, 1000),
+            ((0, -1, 0), (1, 0, 0), (0, 0, -1), 20, 15, 1000),
+            ((0, -1, 0), (1, 0, 0), (0, 0, 1), float("nan"), 15, 1000),
+            ((0, -1, 0), (float("inf"), 0, 0), (0, 0, 1), 20, 15, 1000),
+        ):
+            with self.assertRaises(ValueError):
+                RectangularBeamGeometry(*args)
+
     def state_for(self, preset):
         state = DeviceState()
         if preset == "lateral":
