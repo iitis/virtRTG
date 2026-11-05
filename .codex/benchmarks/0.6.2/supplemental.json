@@ -1,0 +1,506 @@
+{
+  "arrays": {
+    "cone_depth_planar_effective__exposure_mask": {
+      "dtype": "bool",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "cone_depth_planar_effective__line_integral": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "cone_depth_planar_effective__raw_output": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "cone_depth_planar_effective__source_0_integral": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "cone_depth_planar_effective__source_0_output": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "cone_depth_ray_effective__exposure_mask": {
+      "dtype": "bool",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "cone_depth_ray_effective__line_integral": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "cone_depth_ray_effective__raw_output": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "cone_depth_ray_effective__source_0_integral": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "cone_depth_ray_effective__source_0_output": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "parallel_volume_sampling_effective__exposure_mask": {
+      "dtype": "bool",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "parallel_volume_sampling_effective__line_integral": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "parallel_volume_sampling_effective__raw_output": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "parallel_volume_sampling_effective__source_0_integral": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    },
+    "parallel_volume_sampling_effective__source_0_output": {
+      "dtype": "float32",
+      "shape": [
+        5,
+        5
+      ]
+    }
+  },
+  "baseline_git_commit": "8b7ff41883b329cfdb11afb1243c1ce34e59a81e",
+  "baseline_hashes": {
+    "baseline.json": "E4044FC47A8B18D8D8275B198D4BE560B168260BA1912419CA61E2B6B8F1D062",
+    "baseline_arrays.npz": "C86967088175DB26D4AADE1AA65FC7B070E5D91D07A64997C44D0512E3B30C4A"
+  },
+  "benchmarks": {},
+  "cases": {
+    "cone_depth_planar_effective": {
+      "array_bytes": 425,
+      "exposure_mask": [
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      ],
+      "exposure_mask_dtype": "bool",
+      "line_integral_dtype": "float32",
+      "output_mode": "integral",
+      "projection_mode": "cone",
+      "raw_output_dtype": "float32",
+      "shape": [
+        5,
+        5
+      ],
+      "source_backends": [
+        "volume_sampling"
+      ],
+      "source_projections": [
+        {
+          "dtype": "float32",
+          "index": 0,
+          "label": "volume",
+          "shape": [
+            5,
+            5
+          ],
+          "source_type": "VolumetricXRaySource"
+        }
+      ],
+      "stats": {
+        "depth_window_mode": "planar",
+        "detector_shape_hw": [
+          5,
+          5
+        ],
+        "elapsed_seconds": 0.0007634999928995967,
+        "per_source_stats": [
+          {
+            "elapsed_s": 0.00046579993795603514,
+            "interpolation": "linear",
+            "label": "volume",
+            "source_type": "VolumetricXRaySource",
+            "volume_shape": [
+              5,
+              5,
+              5
+            ],
+            "work_count": 101
+          }
+        ],
+        "phase_timings": {
+          "aabb_intersection": 7.369997911155224e-05,
+          "depth_clipping": 7.339997682720423e-05,
+          "direct_sources_total": 6.00004568696022e-07,
+          "marching_total": 0.00046579993795603514,
+          "physics_conversion": 6.700051017105579e-06,
+          "ray_setup": 0.00010529998689889908
+        },
+        "projection_mode": "cone",
+        "source_count": 1,
+        "step_mm": 0.5,
+        "total_pixels": 25,
+        "total_sample_count": 101,
+        "traced_pixels": 25
+      }
+    },
+    "cone_depth_ray_effective": {
+      "array_bytes": 425,
+      "exposure_mask": [
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      ],
+      "exposure_mask_dtype": "bool",
+      "line_integral_dtype": "float32",
+      "output_mode": "integral",
+      "projection_mode": "cone",
+      "raw_output_dtype": "float32",
+      "shape": [
+        5,
+        5
+      ],
+      "source_backends": [
+        "volume_sampling"
+      ],
+      "source_projections": [
+        {
+          "dtype": "float32",
+          "index": 0,
+          "label": "volume",
+          "shape": [
+            5,
+            5
+          ],
+          "source_type": "VolumetricXRaySource"
+        }
+      ],
+      "stats": {
+        "depth_window_mode": "ray",
+        "detector_shape_hw": [
+          5,
+          5
+        ],
+        "elapsed_seconds": 0.0002859999658539891,
+        "per_source_stats": [
+          {
+            "elapsed_s": 0.00017030001617968082,
+            "interpolation": "linear",
+            "label": "volume",
+            "source_type": "VolumetricXRaySource",
+            "volume_shape": [
+              5,
+              5,
+              5
+            ],
+            "work_count": 75
+          }
+        ],
+        "phase_timings": {
+          "aabb_intersection": 4.169996827840805e-05,
+          "depth_clipping": 4.599918611347675e-06,
+          "direct_sources_total": 4.00003045797348e-07,
+          "marching_total": 0.00017030001617968082,
+          "physics_conversion": 3.999914042651653e-06,
+          "ray_setup": 4.870002157986164e-05
+        },
+        "projection_mode": "cone",
+        "source_count": 1,
+        "step_mm": 0.5,
+        "total_pixels": 25,
+        "total_sample_count": 75,
+        "traced_pixels": 25
+      }
+    },
+    "parallel_volume_sampling_effective": {
+      "array_bytes": 425,
+      "exposure_mask": [
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ],
+        [
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      ],
+      "exposure_mask_dtype": "bool",
+      "line_integral_dtype": "float32",
+      "output_mode": "integral",
+      "projection_mode": "parallel",
+      "raw_output_dtype": "float32",
+      "shape": [
+        5,
+        5
+      ],
+      "source_backends": [
+        "volume_sampling"
+      ],
+      "source_projections": [
+        {
+          "dtype": "float32",
+          "index": 0,
+          "label": "volume",
+          "shape": [
+            5,
+            5
+          ],
+          "source_type": "VolumetricXRaySource"
+        }
+      ],
+      "stats": {
+        "depth_window_mode": null,
+        "detector_shape_hw": [
+          5,
+          5
+        ],
+        "elapsed_seconds": 0.0006303000263869762,
+        "per_source_stats": [
+          {
+            "elapsed_s": 0.000520800007507205,
+            "interpolation": "linear",
+            "label": "volume",
+            "source_type": "VolumetricXRaySource",
+            "volume_shape": [
+              5,
+              5,
+              5
+            ],
+            "work_count": 225
+          }
+        ],
+        "phase_timings": {
+          "aabb_intersection": 4.339998122304678e-05,
+          "depth_clipping": 6.00004568696022e-07,
+          "direct_sources_total": 4.00003045797348e-07,
+          "marching_total": 0.000520800007507205,
+          "physics_conversion": 3.600027412176132e-06,
+          "ray_setup": 4.239997360855341e-05
+        },
+        "projection_mode": "parallel",
+        "source_count": 1,
+        "step_mm": 0.5,
+        "total_pixels": 25,
+        "total_sample_count": 225,
+        "traced_pixels": 25
+      }
+    }
+  },
+  "coverage_assertions": {
+    "cone_depth_planar_effective": {
+      "integral_sum": 1.0099999904632568,
+      "integration_work": 101,
+      "traced_pixels": 25
+    },
+    "cone_depth_ray_effective": {
+      "integral_sum": 0.7499999403953552,
+      "integration_work": 75,
+      "traced_pixels": 25
+    },
+    "parallel_volume_sampling_effective": {
+      "integral_sum": 2.249999761581421,
+      "integration_work": 225,
+      "traced_pixels": 25
+    }
+  },
+  "environment": {
+    "cpu_count": 10,
+    "cv2": "4.13.0",
+    "machine": "AMD64",
+    "numpy": "2.4.6",
+    "os": "Windows-10-10.0.26300-SP0",
+    "physical_memory_total_bytes": null,
+    "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "pydicom": "3.0.2",
+    "python": "3.11.9",
+    "scipy": "1.17.1"
+  },
+  "numerical_tolerances_fixed_before_refactoring": {
+    "absolute": 1e-06,
+    "relative": 1e-06,
+    "relative_near_zero_abs_floor": 1e-07
+  },
+  "plugin_worktree_status_at_run": [
+    "A  .codex/benchmarks/0.6.2/baseline.json",
+    "A  .codex/benchmarks/0.6.2/baseline_arrays.npz",
+    "AM .codex/benchmarks/0.6.2/run_baseline.py",
+    "A  .codex/history/HANDOFF-0.6.2.md"
+  ],
+  "scene_parameters": {
+    "cone_source_ref_mm": [
+      0.0,
+      0.0,
+      -8.0
+    ],
+    "detector_basis_mm": [
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        0,
+        1,
+        0
+      ]
+    ],
+    "detector_shape_hw_by_case": {
+      "cone_depth_planar_effective": [
+        5,
+        5
+      ],
+      "cone_depth_ray_effective": [
+        5,
+        5
+      ],
+      "parallel_volume_sampling_effective": [
+        5,
+        5
+      ]
+    },
+    "mesh": "closed triangulated cube, 8 vertices, 12 faces",
+    "step_mm": 0.5,
+    "volume_scalar_hu": 0.0,
+    "volume_shape_zyx": [
+      5,
+      5,
+      5
+    ]
+  },
+  "status": "accepted_code_supplementary_reference",
+  "tested_integration_backends": [
+    "volume sampling",
+    "volume Siddon",
+    "analytic mesh BVH",
+    "experimental projected_intersection_list",
+    "mixed volume and analytic mesh"
+  ]
+}

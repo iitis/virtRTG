@@ -1,0 +1,800 @@
+{
+  "baseline_hashes_verified": {
+    "baseline.json": "E4044FC47A8B18D8D8275B198D4BE560B168260BA1912419CA61E2B6B8F1D062",
+    "baseline_arrays.npz": "C86967088175DB26D4AADE1AA65FC7B070E5D91D07A64997C44D0512E3B30C4A"
+  },
+  "original_baseline": {
+    "arrays": {
+      "cone_collimation_disabled__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_collimation_disabled__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_collimation_disabled__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_collimation_disabled__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_collimation_disabled__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_collimation_enabled__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_collimation_enabled__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_collimation_enabled__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_collimation_enabled__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_collimation_enabled__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_planar__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_planar__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_planar__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_planar__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_planar__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_intensity__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_intensity__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_intensity__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_intensity__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_intensity__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_analytic_bvh__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_analytic_bvh__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_analytic_bvh__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_analytic_bvh__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_analytic_bvh__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_projected_list__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_projected_list__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_projected_list__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_projected_list__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mesh_projected_list__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mixed_volume_mesh__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mixed_volume_mesh__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mixed_volume_mesh__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mixed_volume_mesh__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mixed_volume_mesh__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mixed_volume_mesh__source_1_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_mixed_volume_mesh__source_1_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_multi_source_maps__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_multi_source_maps__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_multi_source_maps__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_multi_source_maps__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_multi_source_maps__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_multi_source_maps__source_1_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_multi_source_maps__source_1_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_sampling_integral__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_sampling_integral__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_sampling_integral__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_sampling_integral__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_sampling_integral__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_siddon_integral__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_siddon_integral__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_siddon_integral__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_siddon_integral__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_volume_siddon_integral__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      }
+    },
+    "cases": {
+      "cone_collimation_disabled": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_collimation_enabled": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_depth_planar": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_depth_ray": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_intensity": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_mesh_analytic_bvh": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_mesh_projected_list": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_mixed_volume_mesh": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_multi_source_maps": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_volume_sampling_integral": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_volume_siddon_integral": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "parallel_volume_sampling": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      }
+    }
+  },
+  "runtime_distributions": {
+    "mixed_sampling_mesh_32x32": {
+      "after_median_seconds": 1.7442055999999866,
+      "after_samples_seconds": [
+        1.8713554999558255,
+        1.7442055999999866,
+        1.6851228999439627,
+        1.7029623999260366,
+        1.7761034000432119
+      ],
+      "after_spread_min_max_seconds": [
+        1.6851228999439627,
+        1.8713554999558255
+      ],
+      "before_median_seconds": 1.7008106000721455,
+      "before_samples_seconds": [
+        1.6612143999664113,
+        1.6294539000373334,
+        1.7113229999085888,
+        1.7008106000721455,
+        1.7022390000056475
+      ],
+      "before_spread_min_max_seconds": [
+        1.6294539000373334,
+        1.7113229999085888
+      ],
+      "runtime_ratio_after_over_before": 1.0255143047238773
+    },
+    "mixed_volume_mesh": {
+      "after_median_seconds": 0.04814660002011806,
+      "after_samples_seconds": [
+        0.052858000039123,
+        0.0465280000353232,
+        0.04814660002011806,
+        0.04827560007106513,
+        0.04587759997230023
+      ],
+      "after_spread_min_max_seconds": [
+        0.04587759997230023,
+        0.052858000039123
+      ],
+      "before_median_seconds": 0.04745139996521175,
+      "before_samples_seconds": [
+        0.04745139996521175,
+        0.046646000002510846,
+        0.047244600020349026,
+        0.0495531999040395,
+        0.048656599945388734
+      ],
+      "before_spread_min_max_seconds": [
+        0.046646000002510846,
+        0.0495531999040395
+      ],
+      "runtime_ratio_after_over_before": 1.014650780702276
+    },
+    "volume_sampling": {
+      "after_median_seconds": 0.006543299998156726,
+      "after_samples_seconds": [
+        0.007686799974180758,
+        0.006369699956849217,
+        0.006448400090448558,
+        0.007257199962623417,
+        0.006543299998156726
+      ],
+      "after_spread_min_max_seconds": [
+        0.006369699956849217,
+        0.007686799974180758
+      ],
+      "before_median_seconds": 0.006693999981507659,
+      "before_samples_seconds": [
+        0.00693100003991276,
+        0.006474899942986667,
+        0.006523100077174604,
+        0.008004199946299195,
+        0.006693999981507659
+      ],
+      "before_spread_min_max_seconds": [
+        0.006474899942986667,
+        0.008004199946299195
+      ],
+      "runtime_ratio_after_over_before": 0.9774873044865185
+    },
+    "volume_sampling_64x64": {
+      "after_median_seconds": 0.03322969994042069,
+      "after_samples_seconds": [
+        0.03322969994042069,
+        0.038280899985693395,
+        0.03295240004081279,
+        0.03535570006351918,
+        0.03261460002977401
+      ],
+      "after_spread_min_max_seconds": [
+        0.03261460002977401,
+        0.038280899985693395
+      ],
+      "before_median_seconds": 0.035905900062061846,
+      "before_samples_seconds": [
+        0.03577670000959188,
+        0.04111599992029369,
+        0.034354500006884336,
+        0.03635559999383986,
+        0.035905900062061846
+      ],
+      "before_spread_min_max_seconds": [
+        0.034354500006884336,
+        0.04111599992029369
+      ],
+      "runtime_ratio_after_over_before": 0.925466285011225
+    },
+    "volume_siddon": {
+      "after_median_seconds": 0.0027856999076902866,
+      "after_samples_seconds": [
+        0.0027856999076902866,
+        0.0027809999883174896,
+        0.0027247999096289277,
+        0.0028122999938204885,
+        0.0053174999775364995
+      ],
+      "after_spread_min_max_seconds": [
+        0.0027247999096289277,
+        0.0053174999775364995
+      ],
+      "before_median_seconds": 0.002786099910736084,
+      "before_samples_seconds": [
+        0.0027544000186026096,
+        0.0027780000818893313,
+        0.002786099910736084,
+        0.0029541999101638794,
+        0.003956999978981912
+      ],
+      "before_spread_min_max_seconds": [
+        0.0027544000186026096,
+        0.003956999978981912
+      ],
+      "runtime_ratio_after_over_before": 0.9998564290375029
+    },
+    "volume_siddon_32x32": {
+      "after_median_seconds": 0.006641000043600798,
+      "after_samples_seconds": [
+        0.006483699893578887,
+        0.006991300033405423,
+        0.006641000043600798,
+        0.006429900065995753,
+        0.009078499977476895
+      ],
+      "after_spread_min_max_seconds": [
+        0.006429900065995753,
+        0.009078499977476895
+      ],
+      "before_median_seconds": 0.006524799973703921,
+      "before_samples_seconds": [
+        0.007725599920377135,
+        0.006524799973703921,
+        0.006319700041785836,
+        0.006879399996250868,
+        0.006302900030277669
+      ],
+      "before_spread_min_max_seconds": [
+        0.006302900030277669,
+        0.007725599920377135
+      ],
+      "runtime_ratio_after_over_before": 1.0178089857720058
+    }
+  },
+  "supplementary": {
+    "arrays": {
+      "cone_depth_planar_effective__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_planar_effective__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_planar_effective__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_planar_effective__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_planar_effective__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray_effective__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray_effective__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray_effective__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray_effective__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "cone_depth_ray_effective__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling_effective__exposure_mask": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling_effective__line_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling_effective__raw_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling_effective__source_0_integral": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      },
+      "parallel_volume_sampling_effective__source_0_output": {
+        "exact": true,
+        "max_absolute_error": 0.0,
+        "max_relative_error": 0.0,
+        "mean_absolute_error": 0.0,
+        "passed": true
+      }
+    },
+    "cases": {
+      "cone_depth_planar_effective": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "cone_depth_ray_effective": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      },
+      "parallel_volume_sampling_effective": {
+        "non_timing_stats_equal": true,
+        "source_order_equal": true
+      }
+    }
+  },
+  "tolerances": {
+    "absolute": 1e-06,
+    "relative": 1e-06,
+    "relative_near_zero_abs_floor": 1e-07
+  }
+}

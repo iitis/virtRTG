@@ -1,0 +1,137 @@
+{
+  "benchmarks": {
+    "mixed_sampling_mesh_32x32": {
+      "cache_state": "New source adapters each iteration; BVH/stack caches cold at projection start. Source setup is outside timed interval.",
+      "detector_shape_hw": [
+        32,
+        32
+      ],
+      "individual_runtime_seconds": [
+        1.6612143999664113,
+        1.6294539000373334,
+        1.7113229999085888,
+        1.7008106000721455,
+        1.7022390000056475
+      ],
+      "integration_work_count": 35468,
+      "median_runtime_seconds": 1.7008106000721455,
+      "phase_median_seconds": {
+        "aabb_intersection": 0.0003423000453040004,
+        "depth_clipping": 8.00006091594696e-07,
+        "direct_sources_total": 1.67530949995853,
+        "marching_total": 0.02479169995058328,
+        "physics_conversion": 3.96000687032938e-05,
+        "ray_setup": 0.0002866999711841345
+      },
+      "repetitions": 5,
+      "retained_capture_array_bytes": 9216,
+      "source_geometry_array_bytes": 65776,
+      "spread_seconds_min_max": [
+        1.6294539000373334,
+        1.7113229999085888
+      ],
+      "traced_pixels": 1024,
+      "tracemalloc_note": "Python allocator proxy; does not include all NumPy native allocations or peak RSS.",
+      "tracemalloc_peak_bytes_median": 189717,
+      "warmups": 2
+    },
+    "volume_sampling_64x64": {
+      "cache_state": "New source adapters each iteration; BVH/stack caches cold at projection start. Source setup is outside timed interval.",
+      "detector_shape_hw": [
+        64,
+        64
+      ],
+      "individual_runtime_seconds": [
+        0.03577670000959188,
+        0.04111599992029369,
+        0.034354500006884336,
+        0.03635559999383986,
+        0.035905900062061846
+      ],
+      "integration_work_count": 117049,
+      "median_runtime_seconds": 0.035905900062061846,
+      "phase_median_seconds": {
+        "aabb_intersection": 0.0004021999193355441,
+        "depth_clipping": 7.00005330145359e-07,
+        "direct_sources_total": 1.2399978004395962e-05,
+        "marching_total": 0.03419160004705191,
+        "physics_conversion": 4.309997893869877e-05,
+        "ray_setup": 0.0004493000451475382
+      },
+      "repetitions": 5,
+      "retained_capture_array_bytes": 36864,
+      "source_geometry_array_bytes": 65536,
+      "spread_seconds_min_max": [
+        0.034354500006884336,
+        0.04111599992029369
+      ],
+      "traced_pixels": 4096,
+      "tracemalloc_note": "Python allocator proxy; does not include all NumPy native allocations or peak RSS.",
+      "tracemalloc_peak_bytes_median": 690436,
+      "warmups": 2
+    },
+    "volume_siddon_32x32": {
+      "cache_state": "New source adapters each iteration; BVH/stack caches cold at projection start. Source setup is outside timed interval.",
+      "detector_shape_hw": [
+        32,
+        32
+      ],
+      "individual_runtime_seconds": [
+        0.007725599920377135,
+        0.006524799973703921,
+        0.006319700041785836,
+        0.006879399996250868,
+        0.006302900030277669
+      ],
+      "integration_work_count": 1024,
+      "median_runtime_seconds": 0.006524799973703921,
+      "phase_median_seconds": {
+        "aabb_intersection": 0.0003377000102773309,
+        "depth_clipping": 6.00004568696022e-07,
+        "direct_sources_total": 0.005181499989703298,
+        "marching_total": 4.00003045797348e-07,
+        "physics_conversion": 4.6600005589425564e-05,
+        "ray_setup": 0.0002812999300658703
+      },
+      "repetitions": 5,
+      "retained_capture_array_bytes": 9216,
+      "source_geometry_array_bytes": 65536,
+      "spread_seconds_min_max": [
+        0.006302900030277669,
+        0.007725599920377135
+      ],
+      "traced_pixels": 1024,
+      "tracemalloc_note": "Python allocator proxy; does not include all NumPy native allocations or peak RSS.",
+      "tracemalloc_peak_bytes_median": 8084198,
+      "warmups": 2
+    }
+  },
+  "environment": {
+    "cpu_count": 10,
+    "cv2": "4.13.0",
+    "machine": "AMD64",
+    "numpy": "2.4.6",
+    "os": "Windows-10-10.0.26300-SP0",
+    "physical_memory_total_bytes": null,
+    "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "pydicom": "3.0.2",
+    "python": "3.11.9",
+    "scipy": "1.17.1"
+  },
+  "scene": {
+    "mesh_faces": 12,
+    "mixed_mesh_edge_mm": 16.0,
+    "scalar_hu": 0.0,
+    "step_mm": 0.5,
+    "volume_extent_mm_xyz": [
+      32,
+      32,
+      16
+    ],
+    "volume_shape_zyx": [
+      16,
+      32,
+      32
+    ]
+  }
+}
