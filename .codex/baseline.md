@@ -1,10 +1,37 @@
 # virtRTG Baseline
 
-Status: the version 0.6.0 architecture design and the narrowly scoped 0.6.1
-tube/collimator configuration implementation are accepted. Version 0.6.1 adds
-configuration snapshots while preserving the existing projection kernels,
-scene serialization, GUI, and simulator protocol. Full manual
-browser-to-plugin GUI validation remains outstanding.
+Status: the 0.6.0 architecture design and the 0.6.1 tube/collimator snapshots
+and 0.6.2 minimal transport extraction are accepted. Version 0.6.2 separates
+attenuation integration from projection ray preparation while preserving the
+existing numerical kernels, scene serialization, GUI, and simulator protocol.
+Full manual browser-to-plugin GUI validation remains outstanding.
+
+## Accepted 0.6.2 transport integration
+
+- `XRayProjector` remains the public projection coordinator. It prepares
+  detector pixels and N=1 cone/parallel rays, constructs the optimized
+  rectangular exposure mask, clips rays to scene bounds and the selected depth
+  window, converts primary integrals through the legacy output modes, and
+  assembles captures and projection statistics.
+- `XRayTransportModel` receives prepared and clipped ray arrays and runs the
+  existing direct and sampled attenuation integration. It accumulates total
+  and per-source primary integrals and returns existing integration work and
+  source diagnostics. Its full detector-flat float32 result uses C-order and
+  zero values for rays excluded from integration.
+- The transport result is a primary attenuation result, not a complete
+  incident-radiation model. It does not represent calibrated detector counts.
+  `hit_mask` and `hit_indices` consistency is ensured by the projector caller.
+- Research restrictions and numerical backends remain on the shared path.
+  Sampling, Siddon, analytic mesh BVH, and experimental projected-intersection
+  list calculations are retained without kernel rewrites.
+- Frozen regression references were preserved. The after comparison passed all
+  79 original and supplementary arrays with zero numerical differences; the
+  plugin suite passed 118 tests with 5 existing placeholder skips.
+- Observed sampling timing reductions were not causally established. A
+  standalone sampled-path transport unit test remains optional future coverage.
+- N>1 focal spots, spectra, scatter, physical collimator blades, and detector
+  response separation remain unimplemented. Detector-response extraction is a
+  later stage and is not part of 0.6.2.
 
 ## Accepted 0.6.1 tube and collimator configuration
 
@@ -74,15 +101,14 @@ browser-to-plugin GUI validation remains outstanding.
   and repeated cached presentation through independent `DetectorImage`
   objects. Depth clipping is not collimation, and
   `motion_frame_mode="all"` is not time-weighted exposure.
-- The accepted migration sequence is 0.6.1 tube/collimator separation with
-  unchanged geometry, effective beam and device-link mapping; 0.6.2 transport
-  extraction preserving clipping, source selection, per-source diagnostics
-  and numerical backends; 0.6.3 detector separation preserving legacy output
-  modes and distinguishing analytical results from recorded signals; 0.6.4
-  capture/cache review preserving repeated presentation without transport
-  reruns; and 0.6.5 integration validation including depth-clipped and
-  per-source diagnostic regressions plus the accepted simulator/device-link
-  workflow.
+- The accepted migration sequence through 0.6.2 is complete: 0.6.1 introduced
+  tube/collimator configuration snapshots with unchanged geometry and
+  device-link mapping; 0.6.2 extracted prepared-ray attenuation integration
+  while preserving clipping, source selection, per-source diagnostics, and
+  numerical backends. Future stages remain 0.6.3 detector separation with
+  legacy output compatibility; 0.6.4 capture/cache review; and 0.6.5
+  integration validation including depth-clipped and per-source diagnostic
+  regressions plus the accepted simulator/device-link workflow.
 - Protocol v1, scene serialization, GUI behavior and projection geometry
   conventions remain unchanged during design acceptance. No physical-model
   classes or 0.6.1 implementation are included in 0.6.0.

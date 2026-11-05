@@ -458,32 +458,32 @@
         5
       ],
       "individual_runtime_seconds": [
-        0.052858000039123,
-        0.0465280000353232,
-        0.04814660002011806,
-        0.04827560007106513,
-        0.04587759997230023
+        0.04577840003184974,
+        0.0449949000030756,
+        0.04626630002167076,
+        0.04511339997407049,
+        0.046714500058442354
       ],
       "integration_work_count": 251,
-      "median_runtime_seconds": 0.04814660002011806,
+      "median_runtime_seconds": 0.04577840003184974,
       "phase_median_seconds": {
-        "aabb_intersection": 0.00032709992956370115,
-        "depth_clipping": 7.00005330145359e-07,
-        "direct_sources_total": 0.04129100008867681,
-        "marching_total": 0.005580900004133582,
-        "physics_conversion": 4.2500090785324574e-05,
-        "ray_setup": 0.00022519996855407953
+        "aabb_intersection": 0.00034009991213679314,
+        "depth_clipping": 1.100008375942707e-06,
+        "direct_sources_total": 0.04004039999563247,
+        "marching_total": 0.0036631999537348747,
+        "physics_conversion": 2.9499991796910763e-05,
+        "ray_setup": 0.00022789998911321163
       },
       "repetitions": 5,
       "retained_capture_array_bytes": 225,
       "source_geometry_array_bytes": 740,
       "spread_seconds_min_max": [
-        0.04587759997230023,
-        0.052858000039123
+        0.0449949000030756,
+        0.046714500058442354
       ],
       "traced_pixels": 25,
       "tracemalloc_note": "Python allocator proxy; does not include all NumPy native allocations or peak RSS.",
-      "tracemalloc_peak_bytes_median": 20995,
+      "tracemalloc_peak_bytes_median": 21227,
       "warmups": 2
     },
     "volume_sampling": {
@@ -493,32 +493,32 @@
         5
       ],
       "individual_runtime_seconds": [
-        0.007686799974180758,
-        0.006369699956849217,
-        0.006448400090448558,
-        0.007257199962623417,
-        0.006543299998156726
+        0.005807499983347952,
+        0.004762800061143935,
+        0.0046582999639213085,
+        0.005743099958635867,
+        0.004769999999552965
       ],
       "integration_work_count": 201,
-      "median_runtime_seconds": 0.006543299998156726,
+      "median_runtime_seconds": 0.004769999999552965,
       "phase_median_seconds": {
-        "aabb_intersection": 0.0003179000923410058,
-        "depth_clipping": 5.00003807246685e-07,
-        "direct_sources_total": 1.2300093658268452e-05,
-        "marching_total": 0.00525690009817481,
-        "physics_conversion": 4.0199956856667995e-05,
-        "ray_setup": 0.00021500000730156898
+        "aabb_intersection": 0.00031669996678829193,
+        "depth_clipping": 6.00004568696022e-07,
+        "direct_sources_total": 2.800021320581436e-06,
+        "marching_total": 0.0035496000200510025,
+        "physics_conversion": 3.120000474154949e-05,
+        "ray_setup": 0.00023260002490133047
       },
       "repetitions": 5,
       "retained_capture_array_bytes": 225,
       "source_geometry_array_bytes": 500,
       "spread_seconds_min_max": [
-        0.006369699956849217,
-        0.007686799974180758
+        0.0046582999639213085,
+        0.005807499983347952
       ],
       "traced_pixels": 25,
       "tracemalloc_note": "Python allocator proxy; does not include all NumPy native allocations or peak RSS.",
-      "tracemalloc_peak_bytes_median": 14942,
+      "tracemalloc_peak_bytes_median": 15261,
       "warmups": 2
     },
     "volume_siddon": {
@@ -528,32 +528,32 @@
         5
       ],
       "individual_runtime_seconds": [
-        0.0027856999076902866,
-        0.0027809999883174896,
-        0.0027247999096289277,
-        0.0028122999938204885,
-        0.0053174999775364995
+        0.0026003000093623996,
+        0.0037864999612793326,
+        0.002884299959987402,
+        0.002635400043800473,
+        0.0025921999476850033
       ],
       "integration_work_count": 25,
-      "median_runtime_seconds": 0.0027856999076902866,
+      "median_runtime_seconds": 0.002635400043800473,
       "phase_median_seconds": {
-        "aabb_intersection": 0.0003217000048607588,
+        "aabb_intersection": 0.000323199899867177,
         "depth_clipping": 5.00003807246685e-07,
-        "direct_sources_total": 0.001642199931666255,
-        "marching_total": 1.00000761449337e-07,
-        "physics_conversion": 3.6499928683042526e-05,
-        "ray_setup": 0.00021169998217374086
+        "direct_sources_total": 0.0015218999469652772,
+        "marching_total": 5.00003807246685e-07,
+        "physics_conversion": 2.580008003860712e-05,
+        "ray_setup": 0.00021970004308968782
       },
       "repetitions": 5,
       "retained_capture_array_bytes": 225,
       "source_geometry_array_bytes": 500,
       "spread_seconds_min_max": [
-        0.0027247999096289277,
-        0.0053174999775364995
+        0.0025921999476850033,
+        0.0037864999612793326
       ],
       "traced_pixels": 25,
       "tracemalloc_note": "Python allocator proxy; does not include all NumPy native allocations or peak RSS.",
-      "tracemalloc_peak_bytes_median": 61381,
+      "tracemalloc_peak_bytes_median": 61485,
       "warmups": 2
     }
   },
@@ -627,10 +627,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.0007920999778434634,
+        "elapsed_seconds": 0.0006243999814614654,
         "per_source_stats": [
           {
-            "elapsed_s": 0.0006831999635323882,
+            "elapsed_s": 0.00048439996317029,
             "interpolation": "linear",
             "label": "volume",
             "source_type": "VolumetricXRaySource",
@@ -643,12 +643,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 3.7100049667060375e-05,
-          "depth_clipping": 4.00003045797348e-07,
+          "aabb_intersection": 5.350005812942982e-05,
+          "depth_clipping": 5.00003807246685e-07,
           "direct_sources_total": 3.00002284348011e-07,
-          "marching_total": 0.0006831999635323882,
-          "physics_conversion": 8.599949069321156e-06,
-          "ray_setup": 4.099996294826269e-05
+          "marching_total": 0.00048439996317029,
+          "physics_conversion": 3.600027412176132e-06,
+          "ray_setup": 6.10999995842576e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -727,10 +727,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.001382600050419569,
+        "elapsed_seconds": 0.0005950999911874533,
         "per_source_stats": [
           {
-            "elapsed_s": 0.0010092000011354685,
+            "elapsed_s": 0.00045409996528178453,
             "interpolation": "linear",
             "label": "volume",
             "source_type": "VolumetricXRaySource",
@@ -743,12 +743,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 0.00011390005238354206,
-          "depth_clipping": 1.300009898841381e-06,
-          "direct_sources_total": 1.200009137392044e-06,
-          "marching_total": 0.0010092000011354685,
-          "physics_conversion": 7.1999384090304375e-06,
-          "ray_setup": 0.00012179999612271786
+          "aabb_intersection": 4.2499974370002747e-05,
+          "depth_clipping": 5.00003807246685e-07,
+          "direct_sources_total": 3.00002284348011e-07,
+          "marching_total": 0.00045409996528178453,
+          "physics_conversion": 3.100023604929447e-06,
+          "ray_setup": 4.4899992644786835e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -827,13 +827,13 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.00013649999164044857,
+        "elapsed_seconds": 0.00014139991253614426,
         "per_source_stats": [],
         "phase_timings": {
-          "aabb_intersection": 3.759993705898523e-05,
-          "depth_clipping": 3.950006794184446e-05,
+          "aabb_intersection": 3.970006946474314e-05,
+          "depth_clipping": 4.029995761811733e-05,
           "physics_conversion": 2.900022082030773e-06,
-          "ray_setup": 4.610000178217888e-05
+          "ray_setup": 4.499999340623617e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -912,10 +912,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.00027439999394118786,
+        "elapsed_seconds": 0.0002785999095067382,
         "per_source_stats": [
           {
-            "elapsed_s": 0.0001645000884309411,
+            "elapsed_s": 0.00016599998343735933,
             "interpolation": "linear",
             "label": "volume",
             "source_type": "VolumetricXRaySource",
@@ -928,12 +928,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 3.969995304942131e-05,
-          "depth_clipping": 4.800036549568176e-06,
+          "aabb_intersection": 4.0199956856667995e-05,
+          "depth_clipping": 4.700035788118839e-06,
           "direct_sources_total": 3.00002284348011e-07,
-          "marching_total": 0.0001645000884309411,
+          "marching_total": 0.00016599998343735933,
           "physics_conversion": 3.100023604929447e-06,
-          "ray_setup": 4.67000063508749e-05
+          "ray_setup": 4.650000482797623e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -1012,10 +1012,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.0006683999672532082,
+        "elapsed_seconds": 0.0005929999751970172,
         "per_source_stats": [
           {
-            "elapsed_s": 0.0005232000257819891,
+            "elapsed_s": 0.0004731999943032861,
             "interpolation": "linear",
             "label": "volume",
             "source_type": "VolumetricXRaySource",
@@ -1028,12 +1028,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 4.700000863522291e-05,
+          "aabb_intersection": 3.979995381087065e-05,
           "depth_clipping": 5.00003807246685e-07,
-          "direct_sources_total": 4.00003045797348e-07,
-          "marching_total": 0.0005232000257819891,
-          "physics_conversion": 1.8699909560382366e-05,
-          "ray_setup": 5.849997978657484e-05
+          "direct_sources_total": 3.00002284348011e-07,
+          "marching_total": 0.0004731999943032861,
+          "physics_conversion": 1.5199999324977398e-05,
+          "ray_setup": 4.379998426884413e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -1112,13 +1112,13 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.0034574000164866447,
+        "elapsed_seconds": 0.005027599981985986,
         "per_source_stats": [
           {
             "backend": "analytic_bvh",
-            "bvh_build_s": 8.930009789764881e-05,
-            "elapsed_s": 0.0033358000218868256,
-            "integration_s": 0.0033168999943882227,
+            "bvh_build_s": 0.00012850004713982344,
+            "elapsed_s": 0.0048856999492272735,
+            "integration_s": 0.00486410001758486,
             "label": "cube_mesh",
             "mode": "solid",
             "source_type": "MeshXRaySource",
@@ -1127,12 +1127,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 4.179996903985739e-05,
-          "depth_clipping": 6.00004568696022e-07,
-          "direct_sources_total": 0.003340700059197843,
-          "marching_total": 2.00001522898674e-07,
-          "physics_conversion": 5.800044164061546e-06,
-          "ray_setup": 5.2900053560733795e-05
+          "aabb_intersection": 4.23000892624259e-05,
+          "depth_clipping": 5.00003807246685e-07,
+          "direct_sources_total": 0.0048952000215649605,
+          "marching_total": 4.00003045797348e-07,
+          "physics_conversion": 1.2300093658268452e-05,
+          "ray_setup": 5.0299917347729206e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -1211,30 +1211,30 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.001313099986873567,
+        "elapsed_seconds": 0.001422500004991889,
         "per_source_stats": [
           {
             "backend": "projected_intersection_list",
-            "elapsed_s": 0.0011885999701917171,
-            "integration_s": 0.0008003999246284366,
+            "elapsed_s": 0.0012613999424502254,
+            "integration_s": 0.0008178000571206212,
             "label": "cube_mesh",
             "mode": "solid",
             "source_type": "MeshXRaySource",
-            "stack_build_s": 0.00031109992414712906,
-            "stack_csr_s": 1.550000160932541e-05,
-            "stack_rasterize_s": 0.0002386999549344182,
-            "stack_uv_projection_s": 5.689996760338545e-05,
+            "stack_build_s": 0.0003554000286385417,
+            "stack_csr_s": 1.7700018361210823e-05,
+            "stack_rasterize_s": 0.0002642000326886773,
+            "stack_uv_projection_s": 7.349997758865356e-05,
             "triangle_count": 12,
             "work_count": 50
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 4.309997893869877e-05,
-          "depth_clipping": 1.00000761449337e-06,
-          "direct_sources_total": 0.0011937000090256333,
-          "marching_total": 2.00001522898674e-07,
-          "physics_conversion": 4.899920895695686e-06,
-          "ray_setup": 5.319993942975998e-05
+          "aabb_intersection": 4.770001396536827e-05,
+          "depth_clipping": 1.400010660290718e-06,
+          "direct_sources_total": 0.0012675999896600842,
+          "marching_total": 1.00000761449337e-07,
+          "physics_conversion": 5.599926225841045e-06,
+          "ray_setup": 6.990006659179926e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -1324,13 +1324,13 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.003934199921786785,
+        "elapsed_seconds": 0.0036373999901115894,
         "per_source_stats": [
           {
             "backend": "analytic_bvh",
-            "bvh_build_s": 5.540007259696722e-05,
-            "elapsed_s": 0.0032630000496283174,
-            "integration_s": 0.003245100029744208,
+            "bvh_build_s": 6.349990144371986e-05,
+            "elapsed_s": 0.002946099964901805,
+            "integration_s": 0.0029278999427333474,
             "label": "cube_mesh",
             "mode": "solid",
             "source_type": "MeshXRaySource",
@@ -1338,7 +1338,7 @@
             "work_count": 50
           },
           {
-            "elapsed_s": 0.0005495999939739704,
+            "elapsed_s": 0.0005576999392360449,
             "interpolation": "linear",
             "label": "volume",
             "source_type": "VolumetricXRaySource",
@@ -1351,12 +1351,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 4.0800077840685844e-05,
-          "depth_clipping": 4.00003045797348e-07,
-          "direct_sources_total": 0.003267300082370639,
-          "marching_total": 0.0005495999939739704,
-          "physics_conversion": 5.300040356814861e-06,
-          "ray_setup": 4.91999089717865e-05
+          "aabb_intersection": 4.1599967516958714e-05,
+          "depth_clipping": 8.00006091594696e-07,
+          "direct_sources_total": 0.002950299996882677,
+          "marching_total": 0.0005576999392360449,
+          "physics_conversion": 5.09992241859436e-06,
+          "ray_setup": 5.409994628280401e-05
         },
         "projection_mode": "cone",
         "source_count": 2,
@@ -1446,10 +1446,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.0008968999609351158,
+        "elapsed_seconds": 0.0008964999578893185,
         "per_source_stats": [
           {
-            "elapsed_s": 0.0003876499831676483,
+            "elapsed_s": 0.0003871999797411263,
             "interpolation": "linear",
             "label": "volume_a",
             "source_type": "VolumetricXRaySource",
@@ -1461,7 +1461,7 @@
             "work_count": 201
           },
           {
-            "elapsed_s": 0.0003876499831676483,
+            "elapsed_s": 0.0003871999797411263,
             "interpolation": "linear",
             "label": "volume_b",
             "source_type": "VolumetricXRaySource",
@@ -1474,12 +1474,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 4.260009154677391e-05,
+          "aabb_intersection": 4.220008850097656e-05,
           "depth_clipping": 5.00003807246685e-07,
           "direct_sources_total": 3.00002284348011e-07,
-          "marching_total": 0.0007752999663352966,
+          "marching_total": 0.0007743999594822526,
           "physics_conversion": 4.00003045797348e-06,
-          "ray_setup": 5.209993105381727e-05
+          "ray_setup": 4.959991201758385e-05
         },
         "projection_mode": "cone",
         "source_count": 2,
@@ -1558,10 +1558,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.0008580000139772892,
+        "elapsed_seconds": 0.0008370000869035721,
         "per_source_stats": [
           {
-            "elapsed_s": 0.0006715999916195869,
+            "elapsed_s": 0.0006463000318035483,
             "interpolation": "linear",
             "label": "volume",
             "source_type": "VolumetricXRaySource",
@@ -1574,12 +1574,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 6.360001862049103e-05,
-          "depth_clipping": 6.00004568696022e-07,
-          "direct_sources_total": 5.00003807246685e-07,
-          "marching_total": 0.0006715999916195869,
-          "physics_conversion": 6.3999323174357414e-06,
-          "ray_setup": 7.760000880807638e-05
+          "aabb_intersection": 6.640003994107246e-05,
+          "depth_clipping": 8.998904377222061e-07,
+          "direct_sources_total": 4.00003045797348e-07,
+          "marching_total": 0.0006463000318035483,
+          "physics_conversion": 5.800044164061546e-06,
+          "ray_setup": 7.740000728517771e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -1658,10 +1658,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.00033629999961704016,
+        "elapsed_seconds": 0.000318799982778728,
         "per_source_stats": [
           {
-            "elapsed_s": 0.00021269998978823423,
+            "elapsed_s": 0.00019440008327364922,
             "label": "volume",
             "source_type": "VolumetricXRaySource",
             "work_count": 25
@@ -1669,11 +1669,11 @@
         ],
         "phase_timings": {
           "aabb_intersection": 4.309997893869877e-05,
-          "depth_clipping": 6.00004568696022e-07,
-          "direct_sources_total": 0.0002207000507041812,
-          "marching_total": 1.00000761449337e-07,
-          "physics_conversion": 4.600035026669502e-06,
-          "ray_setup": 5.100003909319639e-05
+          "depth_clipping": 5.00003807246685e-07,
+          "direct_sources_total": 0.00020160002168267965,
+          "marching_total": 2.00001522898674e-07,
+          "physics_conversion": 4.00003045797348e-06,
+          "ray_setup": 5.0600036047399044e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -1752,13 +1752,13 @@
           5,
           5
         ],
-        "elapsed_seconds": 9.180000051856041e-05,
+        "elapsed_seconds": 9.159999899566174e-05,
         "per_source_stats": [],
         "phase_timings": {
-          "aabb_intersection": 3.829994238913059e-05,
-          "depth_clipping": 5.00003807246685e-07,
-          "physics_conversion": 2.700020559132099e-06,
-          "ray_setup": 3.860006108880043e-05
+          "aabb_intersection": 3.890006337314844e-05,
+          "depth_clipping": 4.998873919248581e-07,
+          "physics_conversion": 2.400018274784088e-06,
+          "ray_setup": 3.5899924114346504e-05
         },
         "projection_mode": "parallel",
         "source_count": 1,
@@ -1789,32 +1789,32 @@
         32
       ],
       "individual_runtime_seconds": [
-        1.8713554999558255,
-        1.7442055999999866,
-        1.6851228999439627,
-        1.7029623999260366,
-        1.7761034000432119
+        1.6867655999958515,
+        1.6770341000519693,
+        1.753094100044109,
+        1.7685388999525458,
+        1.8430061000399292
       ],
       "integration_work_count": 35468,
-      "median_runtime_seconds": 1.7442055999999866,
+      "median_runtime_seconds": 1.753094100044109,
       "phase_median_seconds": {
-        "aabb_intersection": 0.0003525000065565109,
-        "depth_clipping": 8.00006091594696e-07,
-        "direct_sources_total": 1.7158633000217378,
-        "marching_total": 0.027160500059835613,
-        "physics_conversion": 4.309997893869877e-05,
-        "ray_setup": 0.000291300006210804
+        "aabb_intersection": 0.00034110003616660833,
+        "depth_clipping": 9.00006853044033e-07,
+        "direct_sources_total": 1.7325984999770299,
+        "marching_total": 0.019142900011502206,
+        "physics_conversion": 3.4100026823580265e-05,
+        "ray_setup": 0.00028469995595514774
       },
       "repetitions": 5,
       "retained_capture_array_bytes": 9216,
       "source_geometry_array_bytes": 65776,
       "spread_seconds_min_max": [
-        1.6851228999439627,
-        1.8713554999558255
+        1.6770341000519693,
+        1.8430061000399292
       ],
       "traced_pixels": 1024,
       "tracemalloc_note": "Python allocator proxy; does not include all NumPy native allocations or peak RSS.",
-      "tracemalloc_peak_bytes_median": 189847,
+      "tracemalloc_peak_bytes_median": 189725,
       "warmups": 2
     },
     "volume_sampling_64x64": {
@@ -1824,32 +1824,32 @@
         64
       ],
       "individual_runtime_seconds": [
-        0.03322969994042069,
-        0.038280899985693395,
-        0.03295240004081279,
-        0.03535570006351918,
-        0.03261460002977401
+        0.024583399994298816,
+        0.028014700044877827,
+        0.026417799992486835,
+        0.025165900005958974,
+        0.02733880002051592
       ],
       "integration_work_count": 117049,
-      "median_runtime_seconds": 0.03322969994042069,
+      "median_runtime_seconds": 0.026417799992486835,
       "phase_median_seconds": {
-        "aabb_intersection": 0.00039519998244941235,
-        "depth_clipping": 1.00000761449337e-06,
-        "direct_sources_total": 1.3299984857439995e-05,
-        "marching_total": 0.03146309999283403,
-        "physics_conversion": 4.099996294826269e-05,
-        "ray_setup": 0.0004715999821200967
+        "aabb_intersection": 0.00041089998558163643,
+        "depth_clipping": 8.00006091594696e-07,
+        "direct_sources_total": 2.800021320581436e-06,
+        "marching_total": 0.024864599923603237,
+        "physics_conversion": 3.370002377778292e-05,
+        "ray_setup": 0.0004675999516621232
       },
       "repetitions": 5,
       "retained_capture_array_bytes": 36864,
       "source_geometry_array_bytes": 65536,
       "spread_seconds_min_max": [
-        0.03261460002977401,
-        0.038280899985693395
+        0.024583399994298816,
+        0.028014700044877827
       ],
       "traced_pixels": 4096,
       "tracemalloc_note": "Python allocator proxy; does not include all NumPy native allocations or peak RSS.",
-      "tracemalloc_peak_bytes_median": 690510,
+      "tracemalloc_peak_bytes_median": 690340,
       "warmups": 2
     },
     "volume_siddon_32x32": {
@@ -1859,32 +1859,32 @@
         32
       ],
       "individual_runtime_seconds": [
-        0.006483699893578887,
-        0.006991300033405423,
-        0.006641000043600798,
-        0.006429900065995753,
-        0.009078499977476895
+        0.0065775999100878835,
+        0.006195100024342537,
+        0.007183700101450086,
+        0.0065197000512853265,
+        0.0077572999289259315
       ],
       "integration_work_count": 1024,
-      "median_runtime_seconds": 0.006641000043600798,
+      "median_runtime_seconds": 0.0065775999100878835,
       "phase_median_seconds": {
-        "aabb_intersection": 0.00033820001408457756,
+        "aabb_intersection": 0.00035690004006028175,
         "depth_clipping": 6.00004568696022e-07,
-        "direct_sources_total": 0.005328100058250129,
-        "marching_total": 3.00002284348011e-07,
-        "physics_conversion": 4.1499966755509377e-05,
-        "ray_setup": 0.00028089992702007294
+        "direct_sources_total": 0.005273900111205876,
+        "marching_total": 4.00003045797348e-07,
+        "physics_conversion": 3.060000017285347e-05,
+        "ray_setup": 0.0002812000457197428
       },
       "repetitions": 5,
       "retained_capture_array_bytes": 9216,
       "source_geometry_array_bytes": 65536,
       "spread_seconds_min_max": [
-        0.006429900065995753,
-        0.009078499977476895
+        0.006195100024342537,
+        0.0077572999289259315
       ],
       "traced_pixels": 1024,
       "tracemalloc_note": "Python allocator proxy; does not include all NumPy native allocations or peak RSS.",
-      "tracemalloc_peak_bytes_median": 8084086,
+      "tracemalloc_peak_bytes_median": 8084206,
       "warmups": 2
     }
   },
@@ -1894,17 +1894,10 @@
     "relative_near_zero_abs_floor": 1e-07
   },
   "plugin_worktree_status_at_run": [
-    "A  .codex/benchmarks/0.6.2/baseline.json",
-    "A  .codex/benchmarks/0.6.2/baseline_arrays.npz",
-    "AM .codex/benchmarks/0.6.2/run_baseline.py",
-    "AM .codex/history/HANDOFF-0.6.2.md",
-    "?? .codex/benchmarks/0.6.2/after.json",
-    "?? .codex/benchmarks/0.6.2/after_arrays.npz",
-    "?? .codex/benchmarks/0.6.2/baseline_hashes.json",
-    "?? .codex/benchmarks/0.6.2/comparison.json",
-    "?? .codex/benchmarks/0.6.2/large_performance.json",
-    "?? .codex/benchmarks/0.6.2/supplemental.json",
-    "?? .codex/benchmarks/0.6.2/supplemental_arrays.npz"
+    " M .codex/benchmarks/0.6.2/run_baseline.py",
+    " M xray/xrayProjection.py",
+    "?? tests/unit/test_xray_transport.py",
+    "?? xray/xrayTransport.py"
   ],
   "scene_parameters": {
     "cone_source_ref_mm": [
@@ -1983,7 +1976,7 @@
       5
     ]
   },
-  "status": "runner_self_validation_on_accepted_0.6.1",
+  "status": "post_refactoring_comparison",
   "supplemental": {
     "cone_depth_planar_effective": {
       "array_bytes": 425,
@@ -2054,10 +2047,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.0004010000266134739,
+        "elapsed_seconds": 0.00040250003803521395,
         "per_source_stats": [
           {
-            "elapsed_s": 0.00026050000451505184,
+            "elapsed_s": 0.0002631000243127346,
             "interpolation": "linear",
             "label": "volume",
             "source_type": "VolumetricXRaySource",
@@ -2070,12 +2063,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 3.830005880445242e-05,
-          "depth_clipping": 3.9199949242174625e-05,
-          "direct_sources_total": 4.00003045797348e-07,
-          "marching_total": 0.00026050000451505184,
+          "aabb_intersection": 3.77000542357564e-05,
+          "depth_clipping": 3.869994543492794e-05,
+          "direct_sources_total": 3.00002284348011e-07,
+          "marching_total": 0.0002631000243127346,
           "physics_conversion": 3.0999071896076202e-06,
-          "ray_setup": 4.4599990360438824e-05
+          "ray_setup": 4.2800093069672585e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -2154,10 +2147,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.00026000000070780516,
+        "elapsed_seconds": 0.0002711999695748091,
         "per_source_stats": [
           {
-            "elapsed_s": 0.00015810003969818354,
+            "elapsed_s": 0.0001677999971434474,
             "interpolation": "linear",
             "label": "volume",
             "source_type": "VolumetricXRaySource",
@@ -2170,12 +2163,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 3.77000542357564e-05,
-          "depth_clipping": 3.00002284348011e-06,
+          "aabb_intersection": 3.7800054997205734e-05,
+          "depth_clipping": 2.900022082030773e-06,
           "direct_sources_total": 3.00002284348011e-07,
-          "marching_total": 0.00015810003969818354,
-          "physics_conversion": 2.8999056667089462e-06,
-          "ray_setup": 4.299997817724943e-05
+          "marching_total": 0.0001677999971434474,
+          "physics_conversion": 3.00002284348011e-06,
+          "ray_setup": 4.2199972085654736e-05
         },
         "projection_mode": "cone",
         "source_count": 1,
@@ -2254,10 +2247,10 @@
           5,
           5
         ],
-        "elapsed_seconds": 0.0005272999405860901,
+        "elapsed_seconds": 0.0005229000234976411,
         "per_source_stats": [
           {
-            "elapsed_s": 0.00043540005572140217,
+            "elapsed_s": 0.0004319000290706754,
             "interpolation": "linear",
             "label": "volume",
             "source_type": "VolumetricXRaySource",
@@ -2270,12 +2263,12 @@
           }
         ],
         "phase_timings": {
-          "aabb_intersection": 3.7800054997205734e-05,
+          "aabb_intersection": 3.670004662126303e-05,
           "depth_clipping": 5.00003807246685e-07,
           "direct_sources_total": 3.00002284348011e-07,
-          "marching_total": 0.00043540005572140217,
-          "physics_conversion": 2.6999041438102722e-06,
-          "ray_setup": 3.539992030709982e-05
+          "marching_total": 0.0004319000290706754,
+          "physics_conversion": 2.7999049052596092e-06,
+          "ray_setup": 3.3400021493434906e-05
         },
         "projection_mode": "parallel",
         "source_count": 1,

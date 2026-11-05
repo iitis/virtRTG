@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2
+
+- Extracted prepared-ray primary attenuation integration into `XRayTransportModel`, preserving the existing sampling, Siddon, and mesh integration backends and legacy projection outputs.
+- Verified exact equivalence across all 79 frozen original and supplementary reference arrays; no reference data was regenerated.
+
 ## 0.6.1
 
 - Added transient `FocalSpotSamples`, `XRayTube`, and `XRayCollimator` configuration snapshots while keeping `VirtualXRay` as the geometry and serialization authority.

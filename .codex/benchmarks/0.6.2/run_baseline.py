@@ -75,14 +75,12 @@ def _sha256(path: Path) -> str:
 
 def _verify_frozen_baseline():
     """Reject missing or modified original baseline files before comparison."""
-    expected_hashes = BASELINE_HASHES
     hash_manifest = OUTPUT_DIR / "baseline_hashes.json"
     if hash_manifest.exists():
         manifest = json.loads(hash_manifest.read_text(encoding="utf-8"))
-        expected_hashes = manifest.get("files", {})
-        if set(expected_hashes) != set(BASELINE_HASHES):
-            raise RuntimeError("baseline_hashes.json has an incomplete baseline file inventory")
-    for filename, expected_hash in expected_hashes.items():
+        if manifest.get("files") != BASELINE_HASHES:
+            raise RuntimeError("baseline_hashes.json does not match the hard-coded frozen baseline hashes")
+    for filename, expected_hash in BASELINE_HASHES.items():
         path = OUTPUT_DIR / filename
         if not path.is_file():
             raise RuntimeError(f"Frozen baseline file is missing: {path}")
