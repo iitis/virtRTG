@@ -914,16 +914,42 @@ class XRayProjector:
 			+ detector_v_world * float(row_idx)
 		)
 
-	def _ray_definition_world(self, geometry, reference_transform, detector_point_world):
+	def _ray_definition_world(self, geometry, reference_transform, detector_point_world, tube_model=None):
 		"""Return one ray origin and direction in world coordinates."""
 		if geometry.source_position_ref is not None:
-			ray_origin_world = _transform_point(reference_transform, geometry.source_position_ref)
+			if tube_model is None:
+				from .xrayComponents import FocalSpotSamples, XRayTube
+				tube_model = XRayTube(FocalSpotSamples.point(geometry.source_position_ref, "virtual_xray_ref_mm"))
+			ray_origin_world = _transform_point(reference_transform, tube_model.focal_position_mm())
 			ray_direction_world = _normalize_vector(detector_point_world - ray_origin_world)
 			return ray_origin_world, ray_direction_world
 
 		ray_origin_world = detector_point_world
 		ray_direction_world = _normalize_vector(_transform_direction(reference_transform, geometry.ray_direction_ref))
 		return ray_origin_world, ray_direction_world
+
+	@staticmethod
+	def _runtime_components(geometry, tube_model=None, collimator_model=None):
+		"""Resolve component snapshots, adapting geometry-only legacy calls.
+
+		When both sources are present, the component snapshot controls focal origin
+		and collimation; geometry continues to select cone versus parallel mode.
+		"""
+		from .xrayComponents import FocalSpotSamples, XRayCollimator, XRayTube
+		if tube_model is None and geometry.is_cone_beam():
+			tube_model = XRayTube(FocalSpotSamples.point(
+				geometry.source_position_ref, "virtual_xray_ref_mm",
+			))
+		if collimator_model is None:
+			collimator_model = XRayCollimator(
+				beam_geometry=geometry.beam_geometry,
+				enabled=bool(geometry.collimation_enabled),
+			)
+		if tube_model is not None and not isinstance(tube_model, XRayTube):
+			raise TypeError("tube_model must be an XRayTube or None.")
+		if not isinstance(collimator_model, XRayCollimator):
+			raise TypeError("collimator_model must be an XRayCollimator.")
+		return tube_model, collimator_model
 
 	def project_capture(self, config, return_stats=False, progress_callback=None):
 		"""Project one configured scene and return total plus per-source detector outputs."""
@@ -933,13 +959,19 @@ class XRayProjector:
 			geometry=config.effective_geometry(),
 			physics_model=config.physics_model,
 			reference_transform=config.reference_transform,
+			tube_model=config.tube_model,
+			collimator_model=config.collimator_model,
 			return_stats=return_stats,
 			progress_callback=progress_callback,
 		)
 
-	def project(self, geometry, physics_model, reference_transform=None, return_stats=False, progress_callback=None):
+	def project(self, geometry, physics_model, reference_transform=None, return_stats=False, progress_callback=None,
+		tube_model=None, collimator_model=None):
 		"""Project all sample sources through the provided X-ray geometry (vectorized slab marching)."""
 		geometry.validate()
+		tube_model, collimator_model = self._runtime_components(geometry, tube_model, collimator_model)
+		is_cone_beam = geometry.is_cone_beam()
+		focal_position_ref = tube_model.focal_position_mm() if is_cone_beam else None
 		reference_transform = np.eye(4, dtype=np.float32) if reference_transform is None else np.asarray(reference_transform, dtype=np.float32)
 		if reference_transform.shape != (4, 4):
 			raise ValueError("reference_transform must be a 4x4 homogeneous matrix.")
@@ -967,8 +999,8 @@ class XRayProjector:
 		).reshape(n_pixels, 3)
 
 		# Build per-ray origins and normalized directions (H*W, 3)
-		if geometry.source_position_ref is not None:
-			source_world = _transform_point(reference_transform, geometry.source_position_ref).astype(np.float32)
+		if is_cone_beam:
+			source_world = _transform_point(reference_transform, focal_position_ref).astype(np.float32)
 			ray_origins = np.empty((n_pixels, 3), dtype=np.float32)
 			ray_origins[:] = source_world
 			raw_dirs = pixel_centers - source_world
@@ -986,13 +1018,10 @@ class XRayProjector:
 
 		_phase_timings["ray_setup"] = float(perf_counter() - start_time)
 
-		exposure_mask = np.ones((height, width), dtype=bool)
-		if geometry.collimation_enabled:
+		pixel_centers_ref = None
+		if collimator_model.enabled:
 			if not geometry.is_cone_beam():
 				raise ValueError("Physical rectangular collimation is supported only for cone-beam projection.")
-			if geometry.beam_geometry is None:
-				raise ValueError("Physical collimation is enabled but no directional beam geometry is available.")
-			beam = geometry.beam_geometry
 			# Both detector sample positions and beam frame are in reference coordinates;
 			# projection transforms are deliberately not applied a second time here.
 			pixel_centers_ref = (
@@ -1000,14 +1029,11 @@ class XRayProjector:
 				+ np.asarray(geometry.detector_u_ref, dtype=np.float32) * col_grid[:, :, np.newaxis]
 				+ np.asarray(geometry.detector_v_ref, dtype=np.float32) * row_grid[:, :, np.newaxis]
 			)
-			rays = pixel_centers_ref - np.asarray(geometry.source_position_ref, dtype=np.float32)
-			axis = np.asarray(beam.beam_axis_ref, dtype=np.float32)
-			horizontal = np.asarray(beam.beam_horizontal_ref, dtype=np.float32)
-			vertical = np.asarray(beam.beam_vertical_ref, dtype=np.float32)
-			forward = np.einsum("...i,i->...", rays, axis)
-			limit_u = forward * (beam.field_width_cm * 5.0 / beam.field_reference_distance_mm)
-			limit_v = forward * (beam.field_height_cm * 5.0 / beam.field_reference_distance_mm)
-			exposure_mask = (forward > 0.0) & (np.abs(np.einsum("...i,i->...", rays, horizontal)) <= limit_u) & (np.abs(np.einsum("...i,i->...", rays, vertical)) <= limit_v)
+		exposure_mask = collimator_model.exposure_mask(
+			pixel_centers_ref,
+			focal_position_ref,
+			detector_shape_hw=(height, width),
+		)
 
 		# Vectorized AABB intersection for all rays
 		_t_aabb_start = perf_counter()

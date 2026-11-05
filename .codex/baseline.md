@@ -1,10 +1,46 @@
 # virtRTG Baseline
 
 Status: the 0.6.0 architecture design, 0.6.1 tube/collimator snapshots, 0.6.2
-transport extraction, and 0.6.3 ideal detector boundary are accepted. These
-stages preserve existing numerical kernels, scene serialization, GUI, and
-simulator protocol. Full manual browser-to-plugin GUI validation remains
-outstanding.
+transport extraction, 0.6.3 ideal detector boundary, and 0.6.4 tube/collimator
+runtime integration are accepted. These stages preserve existing numerical
+kernels, scene serialization, GUI, and simulator protocol. Full manual
+browser-to-plugin GUI validation remains outstanding.
+
+## Accepted 0.6.4 tube and collimator runtime integration
+
+- `VirtualXRay` remains the authoritative owner of editable and serialized
+  settings and builds fresh tube and collimator snapshots for each projection.
+  No duplicate component settings are serialized.
+- `XRayTube` supplies the focal position used by the current N=1 cone-beam ray
+  path. It accepts only one focal position in the `virtual_xray_ref_mm` frame;
+  tube energy and orientation do not change ray generation.
+- `XRayCollimator` owns the production ideal rectangular exposure mask. It
+  preserves the existing vectorized float32 calculation, forward-positive test,
+  and inclusive field boundaries. Its disabled path returns the bool mask
+  shape without allocating detector coordinate grids.
+- `XRayProjector` coordinates the supplied components while retaining detector
+  pixel and direction construction, transforms, scene AABB intersection,
+  depth clipping, transport coordination, output conversion, detector call,
+  and capture assembly. `XRayTransportModel` and `XRayDetector` are unchanged.
+- `XRayProjectionConfig.effective_geometry()` continues to supply detector
+  geometry, projection mode, depth settings, and quality-profile overrides. A
+  supplied tube or collimator component takes precedence over its corresponding
+  legacy geometry fields. Geometry continues to select cone versus parallel
+  mode. Geometry-only calls receive equivalent temporary components.
+- Compatibility limits: tube execution is N=1; collimation remains an ideal
+  rectangular angular field; enabled parallel collimation is unsupported. The
+  float64 direction helper and float32 production mask may differ at
+  roundoff-sensitive boundaries. Projection cache freshness/provenance is
+  outside this stage.
+- Verification: the plugin suite passed **123 tests**, with **5 existing
+  skips** and **10 subtests passed**. All **79** frozen original and
+  supplementary arrays matched exactly, including masks, shapes, dtypes, source
+  ordering, and non-timing diagnostics. Baseline and supplemental reference
+  files and hashes were preserved. Compilation and `git diff --check` passed.
+- Representative benchmark medians showed no meaningful performance
+  regression; short timing samples are noisy and do not establish an
+  optimization. The 0.6.4 performance observations are recorded in
+  `history/HANDOFF-0.6.4.md`.
 
 ## Accepted 0.6.3 ideal detector response
 

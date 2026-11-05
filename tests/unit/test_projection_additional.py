@@ -22,6 +22,7 @@ from plugins.virtRTG.xray.xrayProjection import (
 	XRayScene,
 )
 from plugins.virtRTG.xray.xrayDetector import XRayDetector
+from plugins.virtRTG.xray.xrayComponents import FocalSpotSamples, XRayCollimator, XRayTube
 from plugins.virtRTG.xray.xrayAnnotationOverlay import (
 	XRayOverlayCross,
 	XRayOverlayProjectionSet,
@@ -381,6 +382,71 @@ def test_covering_beam_matches_unrestricted_and_parallel_collimation_is_rejected
 	)
 	with np.testing.assert_raises_regex(ValueError, "only for cone-beam"):
 		scene.project_capture(XRayProjectionConfig(parallel, model))
+
+
+def test_runtime_tube_overrides_legacy_source_and_parallel_keeps_geometry_mode():
+	"""The N=1 focal origin comes from the configured tube snapshot."""
+	geometry = XRayProjectionGeometry.from_detector_pose(
+		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
+		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[1, 1], detector_pixel_size_mm=1.0,
+		source_position_ref=[0.0, 0.0, -100.0],
+	)
+	scene = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)])
+	model = XRayPhysicsModel(output_mode="integral")
+	legacy = scene.project_capture(XRayProjectionConfig(geometry, model))
+	component = XRayTube(FocalSpotSamples.point((100.0, 0.0, -100.0), "virtual_xray_ref_mm"))
+	configured = scene.project_capture(XRayProjectionConfig(geometry, model, tube_model=component), return_stats=True)
+	assert configured.stats.traced_pixels == 0
+	assert legacy.line_integral_image[0, 0] > 0.0
+
+
+def test_runtime_collimator_component_owns_mask_and_overrides_geometry(monkeypatch):
+	"""Production projection delegates one vector batch to the supplied collimator."""
+	geometry = XRayProjectionGeometry.from_detector_pose(
+		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
+		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[3, 3], detector_pixel_size_mm=10.0,
+		source_position_ref=[0.0, 0.0, 0.0],
+	)
+	component = XRayCollimator(
+		RectangularBeamGeometry((0, 0, -1), (1, 0, 0), (0, -1, 0), 20.0, 20.0, 100.0),
+		enabled=True,
+	)
+	calls = []
+	original = XRayCollimator.exposure_mask
+	def record_batch(self, centers, focal, detector_shape_hw=None):
+		calls.append((centers.shape, np.asarray(focal).copy()))
+		return original(self, centers, focal, detector_shape_hw=detector_shape_hw)
+	monkeypatch.setattr(XRayCollimator, "exposure_mask", record_batch)
+	capture = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)]).project_capture(
+		XRayProjectionConfig(geometry, XRayPhysicsModel(output_mode="integral"), collimator_model=component),
+	)
+	assert len(calls) == 1
+	assert calls[0][0] == (3, 3, 3)
+	assert np.array_equal(calls[0][1], np.zeros(3, dtype=np.float32))
+	assert capture.exposure_mask.dtype == np.bool_
+	assert capture.exposure_mask.shape == (3, 3)
+	assert not capture.exposure_mask.any()
+
+
+def test_projector_direct_legacy_geometry_adapter_and_component_precedence():
+	"""Geometry-only calls adapt to snapshots; supplied snapshots win deterministically."""
+	geometry = XRayProjectionGeometry.from_detector_pose(
+		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
+		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[1, 1], detector_pixel_size_mm=1.0,
+		source_position_ref=[0.0, 0.0, -100.0],
+	)
+	projector = XRayProjector([_ConstantBoxSource(0.5)])
+	legacy = projector.project_capture(XRayProjectionConfig(geometry, XRayPhysicsModel(output_mode="integral")))
+	assert legacy.line_integral_image[0, 0] > 0.0
+	component_collimator = XRayCollimator(
+		RectangularBeamGeometry((0, 0, -1), (1, 0, 0), (0, -1, 0), 1.0, 1.0, 100.0), True,
+	)
+	conflict = XRayProjectionConfig(
+		geometry, XRayPhysicsModel(output_mode="integral"),
+		tube_model=XRayTube(FocalSpotSamples.point((0, 0, -100), "virtual_xray_ref_mm")),
+		collimator_model=component_collimator,
+	)
+	assert not projector.project_capture(conflict).exposure_mask.any()
 
 
 def test_detector_presentation_preserves_acquisition_unexposed_zeros():

@@ -69,6 +69,15 @@ class XRayTube:
 		if self.energy_kev is not None:
 			object.__setattr__(self, "energy_kev", float(self.energy_kev))
 
+	def focal_position_mm(self):
+		"""Return the current N=1 focal position in the VirtualXRay reference frame."""
+		samples = self.focal_spot_samples
+		if samples.coordinate_frame != "virtual_xray_ref_mm":
+			raise ValueError("The current projector requires focal positions in virtual_xray_ref_mm.")
+		if len(samples.positions_mm) != 1:
+			raise ValueError("The current projector supports exactly one focal position.")
+		return np.asarray(samples.positions_mm[0], dtype=np.float32)
+
 
 @dataclass(frozen=True)
 class XRayCollimator:
@@ -118,3 +127,33 @@ physically positioned collimation for independent source origins.
 	def accept_directions(self, ray_directions_ref):
 		"""Return binary acceptance for directions from the shared focal point."""
 		return self.transmission_for_directions(ray_directions_ref).astype(bool)
+
+	def exposure_mask(self, detector_pixel_centers_ref=None, focal_position_ref_mm=None, detector_shape_hw=None):
+		"""Calculate the vectorized ideal rectangular exposure mask in reference space.
+
+		The production mask retains its float32 projection arithmetic and inclusive
+		field-edge comparisons. Detector-grid construction remains projector-owned.
+		"""
+		if not self.enabled:
+			if detector_shape_hw is not None:
+				return np.ones(tuple(int(value) for value in detector_shape_hw), dtype=bool)
+			centers = np.asarray(detector_pixel_centers_ref)
+			if centers.shape[-1:] != (3,):
+				raise ValueError("detector pixel centers must end in a three-vector axis")
+			return np.ones(centers.shape[:-1], dtype=bool)
+		if self.beam_geometry is None:
+			raise ValueError("Physical collimation is enabled but no directional beam geometry is available.")
+		centers = np.asarray(detector_pixel_centers_ref, dtype=np.float32)
+		if centers.shape[-1:] != (3,):
+			raise ValueError("detector pixel centers must end in a three-vector axis")
+		beam = self.beam_geometry
+		rays = centers - np.asarray(focal_position_ref_mm, dtype=np.float32)
+		axis = np.asarray(beam.beam_axis_ref, dtype=np.float32)
+		horizontal = np.asarray(beam.beam_horizontal_ref, dtype=np.float32)
+		vertical = np.asarray(beam.beam_vertical_ref, dtype=np.float32)
+		forward = np.einsum("...i,i->...", rays, axis)
+		limit_u = forward * (beam.field_width_cm * 5.0 / beam.field_reference_distance_mm)
+		limit_v = forward * (beam.field_height_cm * 5.0 / beam.field_reference_distance_mm)
+		return ((forward > 0.0)
+			& (np.abs(np.einsum("...i,i->...", rays, horizontal)) <= limit_u)
+			& (np.abs(np.einsum("...i,i->...", rays, vertical)) <= limit_v))

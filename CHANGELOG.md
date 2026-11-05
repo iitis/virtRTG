@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.4
+
+- Integrated `XRayTube` as the N=1 cone-beam focal source and `XRayCollimator`
+  as the owner of the vectorized ideal rectangular exposure mask.
+- Preserved geometry-only projector compatibility and existing projection
+  results; verified all 79 frozen reference arrays exactly.
+
 ## 0.6.3
 
 - Added an ideal `XRayDetector` response component for total intensity-mode
