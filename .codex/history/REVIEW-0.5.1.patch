@@ -1,0 +1,794 @@
+diff --git a/.codex/baseline.md b/.codex/baseline.md
+index a396279..4c53335 100644
+--- a/.codex/baseline.md
++++ b/.codex/baseline.md
+@@ -1,6 +1,6 @@
+ # virtRTG Baseline
+ 
+-Status: version 0.5.0 - Directional X-ray Beam Geometry is accepted. Full interactive GUI verification remains outstanding.
++Status: version 0.5.1 - Physical Beam Collimation is accepted. Full manual browser-to-plugin GUI validation remains outstanding.
+ 
+ ## Accepted 0.4.0 architecture
+ 
+@@ -21,7 +21,17 @@ Status: version 0.5.0 - Directional X-ray Beam Geometry is accepted. Full intera
+ - The rectangular field dimensions use centimeters and refer to a plane 1000 mm from the focal spot. The field diverges from the ideal point source; containment predicates are available but are not connected to projection generation.
+ - Device pose mapping applies the accepted Three.js Euler XYZ rotation to local positions and directions. The full rigid `T_RS` transform maps positions from station frame S to VirtualXRay reference frame R, while only its rotational part maps directions. `T_WR` is not applied. Beam direction comes from the tube and is not inferred from the detector.
+ - The GUI-thread Device Adapter applies the beam alongside source and detector geometry. If geometry rebuilding fails, it restores the previous beam and source/detector fields. Protocol v1 and the existing detector normal reversal remain unchanged.
+-- Legacy projection behavior is preserved: `build_geometry()` and all projection algorithms ignore the optional beam value, and device updates do not trigger projection.
++- At the 0.5.0 baseline, projection algorithms did not use this optional beam value. Version 0.5.1 connects it to optional cone-beam collimation as described below. Device updates still do not trigger projection.
++
++## Accepted 0.5.1 physical beam collimation
++
++- Cone-beam projection optionally restricts primary exposure to the forward rectangular divergent field described by `RectangularBeamGeometry`. Beam axis, horizontal and vertical axes, field width and height, and reference distance remain independent of detector orientation; beam direction is never inferred from the detector.
++- Collimation is explicitly enabled by `VirtualXRay.physical_collimation_enabled`, which defaults to `False`. A directional beam value alone does not enable it. The VirtualXRay properties panel exposes the explicit mode. Enabled collimation requires beam geometry and cone-beam projection; parallel-beam collimation raises a clear error.
++- The projector computes a vectorized detector exposure mask from focal spot rays and the beam frame in VirtualXRay reference coordinates. It intersects exposure with scene-intersection and depth-window masks before attenuation integration, skipping work for unexposed rays. Existing attenuation integration for active rays is unchanged.
++- Physical intensity conversion applies attenuation and configured geometric gain to exposed rays. Unexposed primary signal is zero, including after intensity-floor handling. Exposed rays that miss anatomy retain unattenuated primary intensity. Integral values outside the field are zero placeholders and are not measurements; the independent exposure mask records validity. No scatter or detector dark-current signal is modeled.
++- The exposure mask is retained on the projection capture and `VirtualXRay.last_exposure_mask` cache, then copied into `DetectorImage`. DetectorImage reapplies the mask after presentation mapping so unexposed pixels remain distinguishable from exposed zero-attenuation pixels. Per-source outputs share the acquisition mask.
++- Scene geometry serialization includes the optional directional beam axes and field parameters. Loading reconstructs them through `RectangularBeamGeometry`; older scenes without the field keep no beam geometry and collimation disabled. The active DetectorImage NPZ package serializes its mask and accepts legacy packages without a mask, while rejecting malformed declared masks. NPY and text array formats cannot preserve mask metadata.
++- Device-state changes do not automatically run projections, and an acquired exposure mask remains associated with its acquisition if device geometry later changes.
+ 
+ ## Current limitations
+ 
+@@ -29,7 +39,9 @@ Status: version 0.5.0 - Directional X-ray Beam Geometry is accepted. Full intera
+ - Phantom pose is received and mapped separately but is not applied to anatomy. Table pose is received but not applied.
+ - Acquisition requests are validated and acknowledged without generating images.
+ - The browser does not stream pose updates during gizmo dragging; it sends the pose when the drag ends.
+-- Directional beam geometry is not yet connected to the projection engine. Generated pixels are not masked or otherwise restricted by the rectangular field.
++- Physical collimation is an ideal hard-edged primary-radiation model. Scatter, dark current, electronic noise, focal-spot penumbra, heel effect, and spectral emission are not modeled. Parallel-beam collimation is unsupported.
++- Full manual browser-to-plugin GUI validation remains outstanding; automated Qt integration tests cover device updates, rollback, and the no-automatic-projection behavior.
++- `XRayPhysicsModel` modularization into separate tube, collimator, and detector classes is deferred; no such classes are part of version 0.5.1.
+ - Device parameters and geometry synchronization are not bidirectional.
+ - Full browser interaction and workspace-selection behavior still require manual verification.
+ 
+@@ -43,11 +55,10 @@ These checks do not confirm full interactive GUI behavior. In particular, a real
+ 
+ ## Planned work, not implemented
+ 
+-The following are possible future directions. They are not requirements or claims about version 0.4.0:
++The following are possible future directions and are not part of the accepted 0.5.1 implementation:
+ 
+ - Persistent ownership of a `VirtualXRay` by a remote-control session.
+ - Restricting local edits to device parameters while remote control owns them.
+-- Physical beam collimation and an exposure mask.
+-- Correct handling of unexposed detector pixels in raw and intensity outputs.
+ - Registration between the simulator phantom and anatomy.
+ - Potential multi-session educational operation through one server with independent `VirtualXRay` sessions.
++- Further physical detector and source modeling, including the deferred model modularization.
+diff --git a/.codex/history/HANDOFF-0.5.1.md b/.codex/history/HANDOFF-0.5.1.md
+new file mode 100644
+index 0000000..c548675
+--- /dev/null
++++ b/.codex/history/HANDOFF-0.5.1.md
+@@ -0,0 +1,87 @@
++# virtRTG 0.5.1 Handoff: Physical Beam Collimation
++
++Status: **Accepted**.
++
++## Active data path
++
++The active projection path is `VirtualXRay.project_and_cache()` to
++`VirtualXRay.project_capture()`, `XRayScene.project_capture()`, and
++`XRayProjector.project()`. A capture carries the acquisition exposure mask with
++its combined and per-source projections. `project_and_cache()` stores that mask
++as `last_exposure_mask`; `DetectorImage.sync_from_virtual_xray()` copies it for
++display/export. Device-state updates still only update geometry and do not run a
++projection.
++
++## Activation and mask computation
++
++`physical_collimation_enabled` explicitly opts into collimation and defaults to
++false, including on legacy objects. A `directional_beam_geometry` value alone
++does not enable it. The VirtualXRay properties panel exposes one checkbox.
++When enabled, cone-beam projection requires directional beam geometry; parallel
++projection raises a clear `ValueError`. No beam direction is inferred from the
++detector.
++
++Detector sample locations and the accepted beam frame are evaluated in the
++VirtualXRay reference frame. The projector builds a vectorized forward-ray and
++rectangular half-width/half-height test from focal spot to each detector pixel.
++The reference transform used by ray integration is not applied to this test a
++second time. The resulting exposure mask is intersected with scene AABB and
++depth-window hits before direct, Joseph, Siddon, or mesh attenuation work.
++
++## Signal and presentation semantics
++
++Exposed rays that miss anatomy retain zero attenuation and therefore receive
++the configured unattenuated primary response. Unexposed pixels are explicitly
++zero after intensity conversion, including after application of the intensity
++floor. Integral-mode values outside the field are set to zero but remain
++unmeasured; `exposure_mask` carries validity separately. Per-source outputs use
++the same acquisition exposure mask, so a source with no anatomical contribution
++is not interpreted as unexposed.
++
++`DetectorImage` retains the mask and applies it after presentation and transfer
++curve mapping. Its active NPZ package stores the mask as a separate array and
++older packages without a mask remain readable. `.npy`, text, CSV, and TSV arrays
++cannot represent mask metadata; exporting those formats loses the distinction
++between unexposed pixels and zero-valued pixels. The older simple VirtualXRay
++array NPZ helper is not the active package path; the current package route is
++through `DetectorImage`.
++
++## Compatibility and cache
++
++Unrestricted capture behavior remains unchanged: its mask is all true and the
++existing physics conversion is unchanged. Acquisition masks are copied into the
++projection cache and exported package, so later device geometry changes do not
++recompute an earlier mask. Existing package reads without a mask initialize no
++presentation mask. Collimation mode is persisted in the VirtualXRay scene
++geometry payload. The complete optional `directional_beam_geometry` mapping is serialized with its axes, field dimensions, and reference distance. Loading reconstructs it through `RectangularBeamGeometry`, so constructor validation applies. Legacy scenes without that mapping retain `None` beam geometry and default collimation off.
++
++## Files changed
++
++- `xray/xrayProjection.py`
++- `virtualXRay.py`
++- `detectorImage.py`
++- `sceneFormat.py`
++- `gui/propVirtualXRay.py`
++- `tests/unit/test_projection_additional.py`
++- `.codex/history/HANDOFF-0.5.1.md`
++
++## Verification
++
++Focused regressions cover GUI mode refresh, scene round-trip with collimation enabled, legacy scene loading, analytic rectangular exposure, reversed beam direction, explicit enablement, skipped unexposed intersections, presentation masking, fixed source/detector beam rotation, and NPZ mask validation for legacy, valid, missing, wrong-shape, and invalid-value packages.
++
++Complete virtRTG unit suite: **100 passed, 5 skipped, 10 subtests passed**. Python compilation passed. Ruff ran on the changed Python modules and reported 40 existing findings; comparing against the staged pre-correction files found no newly introduced Ruff diagnostics. `git diff --check` passed for source, tests, and handoff; the generated unified diff was excluded because its embedded patch lines naturally contain source indentation whitespace. No dependency was installed for this correction round.
++
++Full manual browser-to-plugin GUI validation remains pending. The automated Qt integration tests do not replace a real browser session and interactive workspace selection.
++
++## Legacy API candidates
++
++No historical method is asserted to be unused in this change. The standalone
++`VirtualXRay._save_projection_array()` and `_load_projection_array()` remain
++unchanged; the active rich NPZ package workflow is implemented by
++`DetectorImage`.
++
++## Limitations
++
++The model is ideal point-source primary radiation with hard rectangular edges.
++It does not model scatter, dark current, detector noise, focal-spot penumbra,
++heel effect, or spectral emission. Parallel-beam collimation is unsupported.
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 2eca535..c766edc 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,13 @@
+ # Changelog
+ 
++## 0.5.1
++
++- Added opt-in physical rectangular collimation for cone-beam projections, controlled by `VirtualXRay.physical_collimation_enabled`; directional beam geometry alone remains descriptive unless enabled.
++- Generated an acquisition-specific exposure mask from the independent directional beam frame and skip attenuation integration for rays outside the field.
++- Preserved unexposed-pixel primary-signal semantics through physics conversion, projection caching, DetectorImage presentation, and the active NPZ package workflow.
++- Persisted directional beam geometry and collimation mode in scene files, preserving compatibility with legacy scenes and NPZ packages without masks.
++- Kept parallel-beam projection unrestricted; enabled physical collimation in parallel mode is rejected explicitly.
++
+ ## 0.5.0
+ 
+ - Added optional `RectangularBeamGeometry` to represent the tube-derived beam axis, rectangular field orientation, collimator width and height, and 1000 mm field reference distance.
+diff --git a/detectorImage.py b/detectorImage.py
+index bd1c786..a43999f 100644
+--- a/detectorImage.py
++++ b/detectorImage.py
+@@ -38,6 +38,7 @@ class DetectorImage(Object):
+ 		self.source_stage = str(source_stage)
+ 		self.source_virtual_xray_label = ""
+ 		self.raw_array = None
++		self.exposure_mask = None
+ 		self.presentation_mode = "digital"
+ 		self.presentation_invert = False
+ 		self.presentation_gamma = 1.0
+@@ -567,6 +568,8 @@ class DetectorImage(Object):
+ 			).astype(np.float32, copy=False)
+ 		if bool(self.display_only_window_range):
+ 			normalized = np.where(self._window_mask(self.raw_array), normalized, 0.0).astype(np.float32, copy=False)
++		if self.exposure_mask is not None and self.exposure_mask.shape == normalized.shape:
++			normalized = np.where(self.exposure_mask, normalized, 0.0).astype(np.float32, copy=False)
+ 		return np.clip(normalized, 0.0, 1.0).astype(np.float32, copy=False)
+ 
+ 	def set_projected_annotations(self, overlay_projection_set):
+@@ -672,6 +675,11 @@ class DetectorImage(Object):
+ 			archive_key = f"image_{layer_index:03d}_{layer_key}"
+ 			arrays[archive_key] = np.asarray(array, dtype=np.float32)
+ 			image_refs[layer_key] = self._npz_array_ref_payload(archive_key, array)
++		mask_ref = None
++		if self.exposure_mask is not None and self.exposure_mask.shape == self.raw_array.shape:
++			mask_key = "exposure_mask"
++			arrays[mask_key] = np.asarray(self.exposure_mask, dtype=np.uint8)
++			mask_ref = {"storage": "npz_entry", "archive_key": mask_key, "dtype": "uint8", "shape": list(self.exposure_mask.shape)}
+ 		metadata = {
+ 			"schema": self.PACKAGE_SCHEMA,
+ 			"version": self.PACKAGE_VERSION,
+@@ -687,6 +695,7 @@ class DetectorImage(Object):
+ 			},
+ 			"layers": [dict(layer) for layer in package_layers],
+ 			"images": image_refs,
++			"exposure_mask": mask_ref,
+ 		}
+ 		return metadata, arrays
+ 
+@@ -747,6 +756,37 @@ class DetectorImage(Object):
+ 			if archive_key not in archive:
+ 				raise ValueError(f"Detector package is missing array entry: {archive_key}")
+ 			package_images[key] = np.asarray(archive[archive_key], dtype=np.float32)
++		mask_payload = payload.get("exposure_mask")
++		self.exposure_mask = None
++		if mask_payload is not None:
++			if not isinstance(mask_payload, dict):
++				raise ValueError("Detector package exposure_mask must be a mapping or null.")
++			if str(mask_payload.get("storage", "")).strip().lower() != "npz_entry":
++				raise ValueError("Detector package exposure mask must reference an NPZ entry.")
++			if archive is None:
++				raise ValueError("Detector package exposure mask references an NPZ entry, but no archive was provided.")
++			mask_key = str(mask_payload.get("archive_key", "")).strip()
++			if not mask_key:
++				raise ValueError("Detector package exposure mask reference is missing archive_key.")
++			if mask_key not in archive:
++				raise ValueError(f"Detector package is missing exposure mask array entry: {mask_key}")
++			mask_values = np.asarray(archive[mask_key])
++			if mask_values.ndim != 2:
++				raise ValueError("Detector package exposure mask must be a 2D array.")
++			if mask_values.dtype.kind not in "biuf" or not np.all(np.isfinite(mask_values)):
++				raise ValueError("Detector package exposure mask values must be boolean or numeric 0/1 values.")
++			if not np.all((mask_values == 0) | (mask_values == 1)):
++				raise ValueError("Detector package exposure mask values must contain only 0 and 1.")
++			active_key = payload.get("active_layer_key")
++			active_image = package_images.get(str(active_key))
++			if active_image is not None and mask_values.shape != active_image.shape:
++				raise ValueError("Detector package exposure mask shape must match the active package image.")
++			if any(mask_values.shape != image.shape for image in package_images.values()):
++				raise ValueError("Detector package exposure mask shape must match every package image.")
++			declared_shape = mask_payload.get("shape")
++			if declared_shape is not None and tuple(declared_shape) != mask_values.shape:
++				raise ValueError("Detector package exposure mask shape does not match its metadata.")
++			self.exposure_mask = mask_values.astype(bool, copy=False)
+ 		self.set_projection_package(
+ 			package_images=package_images,
+ 			package_layers=list(payload.get("layers", [])),
+@@ -763,6 +803,8 @@ class DetectorImage(Object):
+ 		defaults = defaults_getter() if callable(defaults_getter) else getattr(virtual_xray, "detector_image_defaults", None)
+ 		self.apply_presentation_defaults(defaults)
+ 		self.set_projected_annotations(getattr(virtual_xray, "last_projected_annotations", None))
++		mask = getattr(virtual_xray, "last_exposure_mask", None)
++		self.exposure_mask = None if mask is None else np.asarray(mask, dtype=bool).copy()
+ 		package_images = {}
+ 		package_layers = []
+ 		if getattr(virtual_xray, "last_raw_projection", None) is not None:
+diff --git a/gui/propVirtualXRay.py b/gui/propVirtualXRay.py
+index b7d7978..43ea1b5 100644
+--- a/gui/propVirtualXRay.py
++++ b/gui/propVirtualXRay.py
+@@ -90,6 +90,9 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
+ 		self._add_flow_control(scene_layout, "Objects", self.volumesLabel)
+ 		self._add_flow_control(scene_layout, "Preset", self.geometryPresetWidget)
+ 		self._add_flow_control(scene_layout, "Mode", self.modeCombo)
++		self.collimationCheck = QCheckBox("Enable physical rectangular collimation")
++		self.collimationCheck.setToolTip("Uses the directional beam geometry received from the device link. Cone-beam only.")
++		self._add_flow_control(scene_layout, "Beam", self.collimationCheck)
+ 		geomLayout.addWidget(sceneGroup)
+ 
+ 		detectorGroup, detector_layout = self._create_collapsible_flow_group("Detector", collapsed=True)
+@@ -970,6 +973,7 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
+ 		"""Connect all editor widgets to their slots."""
+ 		self.applyGeometryPresetButton.clicked.connect(self.on_apply_geometry_preset)
+ 		self.modeCombo.currentTextChanged.connect(self.on_mode_changed)
++		self.collimationCheck.toggled.connect(self.on_collimation_toggled)
+ 		self.detectorCenterSpin.valueChanged.connect(self.on_detector_center_changed)
+ 		self.detectorNormalSpin.valueChanged.connect(self.on_detector_normal_changed)
+ 		self.detectorUpSpin.valueChanged.connect(self.on_detector_up_changed)
+@@ -1131,6 +1135,7 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
+ 			return
+ 		self.blockAll(True)
+ 		self.modeCombo.setCurrentText(str(obj.projection_mode))
++		self.collimationCheck.setChecked(bool(getattr(obj, "physical_collimation_enabled", False)))
+ 		self.detectorCenterSpin.setValue(obj.detector_center_ref)
+ 		self.detectorNormalSpin.setValue(obj.detector_normal_ref)
+ 		self.detectorUpSpin.setValue(obj.detector_up_ref)
+@@ -1210,6 +1215,14 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
+ 		obj.projection_mode = str(mode).lower()
+ 		self._after_change(obj)
+ 
++	def on_collimation_toggled(self, enabled):
++		"""Set the explicit physical beam collimation mode."""
++		obj = self.obj_ref()
++		if obj is None:
++			return
++		obj.physical_collimation_enabled = bool(enabled)
++		self._after_change(obj)
++
+ 	@pyqtSlot()
+ 	def on_apply_geometry_preset(self):
+ 		"""Apply one predefined geometry preset and refresh the 3D gizmo immediately."""
+diff --git a/sceneFormat.py b/sceneFormat.py
+index 7df92df..77671c5 100644
+--- a/sceneFormat.py
++++ b/sceneFormat.py
+@@ -23,7 +23,7 @@ from .xray.xrayAnnotationOverlay import (
+ 	overlay_projection_set_from_payload,
+ 	overlay_projection_set_to_payload,
+ )
+-from .xray.xrayProjection import XRayPhysicsModel
++from .xray.xrayProjection import RectangularBeamGeometry, XRayPhysicsModel
+ from .xray.xraySource import (
+ 	XRayMaterialResponseConfig,
+ 	ensure_xray_source_config,
+@@ -361,6 +361,17 @@ def _virtual_xray_payload(virtual_xray):
+ 		"version": 2,
+ 		"geometry": {
+ 			"projection_mode": str(virtual_xray.projection_mode),
++			"physical_collimation_enabled": bool(getattr(virtual_xray, "physical_collimation_enabled", False)),
++			"directional_beam_geometry": (
++				None if getattr(virtual_xray, "directional_beam_geometry", None) is None else {
++					"beam_axis_ref": list(virtual_xray.directional_beam_geometry.beam_axis_ref),
++					"beam_horizontal_ref": list(virtual_xray.directional_beam_geometry.beam_horizontal_ref),
++					"beam_vertical_ref": list(virtual_xray.directional_beam_geometry.beam_vertical_ref),
++					"field_width_cm": float(virtual_xray.directional_beam_geometry.field_width_cm),
++					"field_height_cm": float(virtual_xray.directional_beam_geometry.field_height_cm),
++					"field_reference_distance_mm": float(virtual_xray.directional_beam_geometry.field_reference_distance_mm),
++				}
++			),
+ 			"detector_center_ref": list(np.asarray(virtual_xray.detector_center_ref, dtype=np.float64).reshape(3)),
+ 			"detector_normal_ref": list(np.asarray(virtual_xray.detector_normal_ref, dtype=np.float64).reshape(3)),
+ 			"detector_up_ref": list(np.asarray(virtual_xray.detector_up_ref, dtype=np.float64).reshape(3)),
+@@ -593,6 +604,11 @@ def _apply_virtual_xray_payload(virtual_xray, payload):
+ 	"""Apply one serialized virtual X-ray payload to an existing object."""
+ 	geometry = payload.get("geometry", {})
+ 	virtual_xray.projection_mode = str(geometry.get("projection_mode", virtual_xray.projection_mode))
++	virtual_xray.physical_collimation_enabled = bool(geometry.get("physical_collimation_enabled", False))
++	beam_payload = geometry.get("directional_beam_geometry")
++	virtual_xray.directional_beam_geometry = (
++		None if beam_payload is None else RectangularBeamGeometry(**dict(beam_payload))
++	)
+ 	virtual_xray.detector_center_ref = np.asarray(geometry.get("detector_center_ref", virtual_xray.detector_center_ref), dtype=np.float32)
+ 	virtual_xray.detector_normal_ref = np.asarray(geometry.get("detector_normal_ref", virtual_xray.detector_normal_ref), dtype=np.float32)
+ 	virtual_xray.detector_up_ref = np.asarray(geometry.get("detector_up_ref", virtual_xray.detector_up_ref), dtype=np.float32)
+diff --git a/tests/unit/test_projection_additional.py b/tests/unit/test_projection_additional.py
+index df4cd56..975ed47 100644
+--- a/tests/unit/test_projection_additional.py
++++ b/tests/unit/test_projection_additional.py
+@@ -4,8 +4,10 @@
+ from __future__ import annotations
+ 
+ from dataclasses import replace
++import json
+ 
+ import numpy as np
++import pytest
+ 
+ from dpVision import Mesh, Motion, Transform, Volumetric
+ 
+@@ -15,6 +17,7 @@ from plugins.virtRTG.xray.xrayProjection import (
+ 	XRayProjectionConfig,
+ 	XRayProjectionGeometry,
+ 	XRayProjectionQualityProfile,
++	RectangularBeamGeometry,
+ 	XRayScene,
+ )
+ from plugins.virtRTG.xray.xrayAnnotationOverlay import (
+@@ -26,6 +29,27 @@ from plugins.virtRTG.detectorImage import DetectorImage
+ from plugins.virtRTG.virtualXRay import VirtualXRay
+ 
+ 
++def test_virtual_xray_mode_change_runs_property_refresh():
++	"""Mode selection invalidates and refreshes the active VirtualXRay properties."""
++	from plugins.virtRTG.gui.propVirtualXRay import PropVirtualXRay
++
++	class _PanelStub:
++		def __init__(self):
++			self.obj = VirtualXRay()
++			self.changed = []
++
++		def obj_ref(self):
++			return self.obj
++
++		def _after_change(self, obj):
++			self.changed.append(obj)
++
++	panel = _PanelStub()
++	PropVirtualXRay.on_mode_changed(panel, "parallel")
++	assert panel.obj.projection_mode == "parallel"
++	assert panel.changed == [panel.obj]
++
++
+ def _translated_transform(tx=0.0, ty=0.0, tz=0.0):
+ 	"""Build one simple translation transform for scene-assembly tests."""
+ 	transform = Transform()
+@@ -232,6 +256,144 @@ def test_scene_project_capture_exposes_additive_per_source_line_integrals():
+ 	)
+ 
+ 
++def test_rectangular_collimation_mask_uses_beam_axes_and_skips_unexposed_rays():
++	"""Use analytic field boundaries for rotated-beam pixel exposure and integration."""
++	geometry = XRayProjectionGeometry.from_detector_pose(
++		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
++		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[3, 3],
++		detector_pixel_size_mm=10.0, source_position_ref=[0.0, 0.0, 0.0],
++		beam_geometry=RectangularBeamGeometry((0, 0, 1), (1, 0, 0), (0, 1, 0), 1.0, 100.0, 100.0),
++		collimation_enabled=True,
++	)
++	config = XRayProjectionConfig(geometry, XRayPhysicsModel(output_mode="intensity", intensity_floor=0.2))
++	scene = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)])
++	capture = scene.project_capture(config, return_stats=True)
++	expected = np.array([[False, True, False], [False, True, False], [False, True, False]])
++	assert np.array_equal(capture.exposure_mask, expected)
++	assert capture.stats.traced_pixels == 2
++	assert capture.detector_image[1, 1] > 0.0
++	assert capture.detector_image[0, 1] == 1.0
++	assert np.all(capture.detector_image[~expected] == 0.0)
++
++
++def test_beam_geometry_is_inert_until_explicitly_enabled_and_reversed_beam_is_empty():
++	"""Keep beam values descriptive unless enabled and handle zero-overlap detectors."""
++	beam = RectangularBeamGeometry((0, 0, -1), (1, 0, 0), (0, -1, 0), 20.0, 20.0, 100.0)
++	geometry = XRayProjectionGeometry.from_detector_pose(
++		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
++		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[1, 1],
++		detector_pixel_size_mm=1.0, source_position_ref=[0.0, 0.0, 0.0], beam_geometry=beam,
++	)
++	scene = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)])
++	unrestricted = scene.project_capture(XRayProjectionConfig(geometry, XRayPhysicsModel(output_mode="integral")))
++	assert unrestricted.exposure_mask[0, 0]
++	enabled = replace(geometry, collimation_enabled=True)
++	collimated = scene.project_capture(XRayProjectionConfig(enabled, XRayPhysicsModel(output_mode="intensity", intensity_floor=0.4)), return_stats=True)
++	assert not collimated.exposure_mask.any()
++	assert collimated.stats.traced_pixels == 0
++	assert np.all(collimated.detector_image == 0.0)
++
++
++def test_rotating_beam_with_fixed_source_and_detector_changes_only_exposure_selection():
++	"""Rotate only the beam frame and keep each still-exposed ray's attenuation unchanged."""
++	geometry = XRayProjectionGeometry.from_detector_pose(
++		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
++		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[3, 3],
++		detector_pixel_size_mm=10.0, source_position_ref=[0.0, 0.0, 0.0],
++		beam_geometry=RectangularBeamGeometry((0, 0, 1), (1, 0, 0), (0, 1, 0), 20.0, 100.0, 100.0),
++		collimation_enabled=True,
++	)
++	scene = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)])
++	model = XRayPhysicsModel(output_mode="integral")
++	initial = scene.project_capture(XRayProjectionConfig(geometry, model))
++	rotated_beam = RectangularBeamGeometry((1, 0, 0), (0, -1, 0), (0, 0, -1), 200.0, 200.0, 100.0)
++	rotated = scene.project_capture(XRayProjectionConfig(replace(geometry, beam_geometry=rotated_beam), model))
++	assert not np.array_equal(initial.exposure_mask, rotated.exposure_mask)
++	shared = initial.exposure_mask & rotated.exposure_mask
++	assert shared.any()
++	assert np.array_equal(initial.line_integral_image[shared], rotated.line_integral_image[shared])
++
++
++def test_covering_beam_matches_unrestricted_and_parallel_collimation_is_rejected():
++	"""Preserve cone results for a covering field and reject unsupported parallel mode."""
++	beam = RectangularBeamGeometry((0, 0, 1), (1, 0, 0), (0, 1, 0), 20.0, 20.0, 100.0)
++	cone = XRayProjectionGeometry.from_detector_pose(
++		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
++		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[3, 3], detector_pixel_size_mm=10.0,
++		source_position_ref=[0.0, 0.0, 0.0], beam_geometry=beam,
++	)
++	scene = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)])
++	model = XRayPhysicsModel(output_mode="intensity")
++	plain = scene.project_capture(XRayProjectionConfig(cone, model))
++	covered = scene.project_capture(XRayProjectionConfig(replace(cone, collimation_enabled=True), model))
++	assert covered.exposure_mask.all()
++	assert np.array_equal(plain.line_integral_image, covered.line_integral_image)
++	assert np.array_equal(plain.detector_image, covered.detector_image)
++	parallel = XRayProjectionGeometry(
++		detector_origin_ref=[0.0, 0.0, 0.0], detector_u_ref=[1.0, 0.0, 0.0],
++		detector_v_ref=[0.0, 1.0, 0.0], detector_shape_hw=[1, 1], ray_direction_ref=[0, 0, 1],
++		beam_geometry=beam, collimation_enabled=True,
++	)
++	with np.testing.assert_raises_regex(ValueError, "only for cone-beam"):
++		scene.project_capture(XRayProjectionConfig(parallel, model))
++
++
++def test_detector_presentation_preserves_acquisition_unexposed_zeros():
++	"""Do not let windowing or transfer curves turn unexposed pixels into signal."""
++	image = DetectorImage(array=np.array([[0.0, 0.5]], dtype=np.float32))
++	image.exposure_mask = np.array([[False, True]])
++	image.set_transfer_points_pct([(0.0, 100.0), (100.0, 100.0)])
++	assert image.get_display_array()[0, 0] == 0.0
++
++
++def test_detector_npz_package_roundtrips_exposure_mask_and_accepts_legacy_package(tmp_path):
++	"""Validate declared NPZ masks and accept older mask-free package metadata."""
++	image = DetectorImage(array=np.array([[0.0, 0.5]], dtype=np.float32))
++	image.exposure_mask = np.array([[False, True]])
++	path = tmp_path / "masked.npz"
++	image.export_array(path)
++	loaded = DetectorImage()
++	loaded.import_array(path)
++	assert np.array_equal(loaded.exposure_mask, image.exposure_mask)
++
++	with np.load(path, allow_pickle=False) as archive:
++		arrays = {key: np.asarray(archive[key]).copy() for key in archive.files}
++	metadata = json.loads(str(arrays["metadata_json"].tolist()))
++	mask_key = metadata["exposure_mask"]["archive_key"]
++
++	legacy_arrays = dict(arrays)
++	legacy_metadata = dict(metadata)
++	legacy_metadata.pop("exposure_mask")
++	legacy_arrays["metadata_json"] = np.asarray(json.dumps(legacy_metadata), dtype=np.str_)
++	legacy_path = tmp_path / "legacy.npz"
++	np.savez_compressed(legacy_path, **legacy_arrays)
++	legacy = DetectorImage()
++	legacy.import_array(legacy_path)
++	assert legacy.exposure_mask is None
++	assert legacy.raw_array.shape == (1, 2)
++
++	missing_arrays = dict(arrays)
++	missing_arrays.pop(mask_key)
++	missing_path = tmp_path / "missing-mask.npz"
++	np.savez_compressed(missing_path, **missing_arrays)
++	with pytest.raises(ValueError, match="missing exposure mask array entry"):
++		DetectorImage().import_array(missing_path)
++
++	wrong_shape_arrays = dict(arrays)
++	wrong_shape_arrays[mask_key] = np.ones((2, 2), dtype=np.uint8)
++	wrong_shape_path = tmp_path / "wrong-shape-mask.npz"
++	np.savez_compressed(wrong_shape_path, **wrong_shape_arrays)
++	with pytest.raises(ValueError, match="shape must match"):
++		DetectorImage().import_array(wrong_shape_path)
++
++	invalid_values_arrays = dict(arrays)
++	invalid_values_arrays[mask_key] = np.array([[0, 2]], dtype=np.uint8)
++	invalid_values_path = tmp_path / "invalid-mask-values.npz"
++	np.savez_compressed(invalid_values_path, **invalid_values_arrays)
++	with pytest.raises(ValueError, match="only 0 and 1"):
++		DetectorImage().import_array(invalid_values_path)
++
++
+ def test_scene_project_respects_ray_depth_window_limits():
+ 	"""Clip slab marching to the configured ray-parameter interval."""
+ 	geometry = XRayProjectionGeometry(
+diff --git a/tests/unit/test_scene_format.py b/tests/unit/test_scene_format.py
+index 0cd2cba..b68bc3e 100644
+--- a/tests/unit/test_scene_format.py
++++ b/tests/unit/test_scene_format.py
+@@ -14,6 +14,7 @@ from dpVision.parser import Parser
+ 
+ from plugins.virtRTG.sceneFormat import build_virtual_xray_scene_xml, load_virtual_xray_scene, save_virtual_xray_scene
+ from plugins.virtRTG.virtualXRay import VirtualXRay
++from plugins.virtRTG.xray.xrayProjection import RectangularBeamGeometry
+ from plugins.virtRTG.xray.xraySource import (
+ 	XRayMaterialResponseConfig,
+ 	get_xray_material_response_config,
+@@ -92,6 +93,15 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
+ 		(0.0, 0.015),
+ 		(1000.0, 0.05),
+ 	]
++	virtual_xray.physical_collimation_enabled = True
++	virtual_xray.directional_beam_geometry = RectangularBeamGeometry(
++		beam_axis_ref=(0.0, -1.0, 0.0),
++		beam_horizontal_ref=(1.0, 0.0, 0.0),
++		beam_vertical_ref=(0.0, 0.0, 1.0),
++		field_width_cm=32.0,
++		field_height_cm=24.0,
++		field_reference_distance_mm=1000.0,
++	)
+ 
+ 	transform = Transform()
+ 	transform.label = "source-transform"
+@@ -127,6 +137,10 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
+ 		(0.0, 0.015),
+ 		(1000.0, 0.05),
+ 	]
++	assert imported.physical_collimation_enabled is True
++	assert imported.directional_beam_geometry == virtual_xray.directional_beam_geometry
++	assert imported.build_geometry().collimation_enabled is True
++	assert imported.build_geometry().beam_geometry == virtual_xray.directional_beam_geometry
+ 	assert len(imported.children()) == 1
+ 	imported_transform = imported.children()[0]
+ 	assert isinstance(imported_transform, Transform)
+@@ -181,6 +195,8 @@ def test_scene_import_creates_safe_hidden_placeholder_for_missing_volume_files(t
+ 	imported_volume = imported.children()[0]
+ 
+ 	assert isinstance(imported_volume, Volumetric)
++	assert imported.directional_beam_geometry is None
++	assert imported.physical_collimation_enabled is False
+ 	assert imported_volume.visible is False
+ 	assert imported_volume.shape == (1, 1, 1)
+ 	assert len(imported_volume.metadata) == 1
+diff --git a/virtualXRay.py b/virtualXRay.py
+index 0a064a3..5f364f2 100644
+--- a/virtualXRay.py
++++ b/virtualXRay.py
+@@ -211,6 +211,7 @@ class VirtualXRay(Object):
+ 		self.ray_direction_ref = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+ 		self.projection_mode = "cone"
+ 		self.directional_beam_geometry = None
++		self.physical_collimation_enabled = False
+ 		self.motion_frame_mode = "active"
+ 		self.step_mm = 1.0
+ 		self.depth_window_mode = "off"
+@@ -341,6 +342,8 @@ class VirtualXRay(Object):
+ 			self.last_raw_projection = None
+ 		if not hasattr(self, "last_source_projections"):
+ 			self.last_source_projections = []
++		if not hasattr(self, "last_exposure_mask"):
++			self.last_exposure_mask = None
+ 
+ 	def child_transform_relative_to_self(self, child):
+ 		"""Return one descendant transform expressed in the local frame of this X-ray object."""
+@@ -610,6 +613,8 @@ class VirtualXRay(Object):
+ 			depth_window_mm=self.depth_window_mm if geometry_depth_mode is not None else None,
+ 			depth_window_origin_ref=self.depth_window_origin_ref if geometry_depth_mode == "planar" else None,
+ 			depth_window_axis_ref=depth_axis_ref,
++			beam_geometry=getattr(self, "directional_beam_geometry", None),
++			collimation_enabled=bool(getattr(self, "physical_collimation_enabled", False)),
+ 		)
+ 
+ 	def build_scalar_preprocessor(self):
+@@ -904,6 +909,10 @@ class VirtualXRay(Object):
+ 		self.last_line_integral_projection = np.asarray(capture.line_integral_image, dtype=np.float32)
+ 		self.last_raw_projection = np.asarray(capture.detector_image, dtype=np.float32)
+ 		self.last_source_projections = list(capture.source_projections)
++		self.last_exposure_mask = (
++			np.asarray(capture.exposure_mask, dtype=bool).copy()
++			if capture.exposure_mask is not None else None
++		)
+ 		self.project_scene_annotations()
+ 		if return_stats:
+ 			return self.last_raw_projection, capture.stats
+@@ -942,6 +951,7 @@ class VirtualXRay(Object):
+ 			line_integral_image.reshape(-1),
+ 			source_to_detector_distance_mm=distances,
+ 			projection_mode="cone" if geometry.is_cone_beam() else "parallel",
++			exposure_mask=(None if getattr(self, "last_exposure_mask", None) is None else self.last_exposure_mask.reshape(-1)),
+ 		).reshape(line_integral_image.shape).astype(np.float32, copy=False)
+ 
+ 	def _resolve_projection_cache(self, stage):
+@@ -1047,6 +1057,10 @@ class VirtualXRay(Object):
+ 						self.last_raw_projection = None
+ 						self.last_line_integral_projection = None
+ 						self.last_source_projections = []
++						self.last_exposure_mask = (
++							np.asarray(detector_image.exposure_mask, dtype=bool).copy()
++							if detector_image.exposure_mask is not None else None
++						)
+ 						self.last_projected_annotations = detector_image.overlay_projection_set
+ 						for layer in detector_image.package_layers:
+ 							layer_array = detector_image.package_images.get(layer["key"], None)
+@@ -1142,6 +1156,10 @@ class VirtualXRay(Object):
+ 				np.asarray(self.last_line_integral_projection, dtype=np.float32).copy()
+ 				if self.last_line_integral_projection is not None else None
+ 			),
++			"exposure_mask": (
++				np.asarray(self.last_exposure_mask, dtype=bool).copy()
++				if self.last_exposure_mask is not None else None
++			),
+ 			"source_projections": [],
+ 		}
+ 		for source_projection in self.last_source_projections:
+@@ -1160,6 +1178,8 @@ class VirtualXRay(Object):
+ 		payload = {} if payload is None else dict(payload)
+ 		raw_projection = payload.get("raw_projection", None)
+ 		line_integral_projection = payload.get("line_integral_projection", None)
++		exposure_mask = payload.get("exposure_mask", None)
++		self.last_exposure_mask = None if exposure_mask is None else np.asarray(exposure_mask, dtype=bool)
+ 		self.last_raw_projection = (
+ 			None if raw_projection is None
+ 			else np.asarray(raw_projection, dtype=np.float32)
+diff --git a/xray/xrayProjection.py b/xray/xrayProjection.py
+index 0c13535..19807df 100644
+--- a/xray/xrayProjection.py
++++ b/xray/xrayProjection.py
+@@ -165,6 +165,8 @@ class XRayProjectionGeometry:
+ 	depth_window_mm: Sequence[float] | None = None
+ 	depth_window_origin_ref: Sequence[float] | None = None
+ 	depth_window_axis_ref: Sequence[float] | None = None
++	beam_geometry: RectangularBeamGeometry | None = None
++	collimation_enabled: bool = False
+ 
+ 
+ 	@classmethod
+@@ -183,6 +185,8 @@ class XRayProjectionGeometry:
+ 		depth_window_mm=None,
+ 		depth_window_origin_ref=None,
+ 		depth_window_axis_ref=None,
++		beam_geometry=None,
++		collimation_enabled=False,
+ 	):
+ 		"""Build geometry from a detector center, orientation and either size or pixel spacing."""
+ 		height = int(detector_shape_hw[0])
+@@ -239,6 +243,8 @@ class XRayProjectionGeometry:
+ 			depth_window_mm=depth_window_mm,
+ 			depth_window_origin_ref=depth_window_origin_ref,
+ 			depth_window_axis_ref=depth_window_axis_ref,
++			beam_geometry=beam_geometry,
++			collimation_enabled=bool(collimation_enabled),
+ 		)
+ 
+ 	def detector_pixel_size_mm_uv(self):
+@@ -598,7 +604,7 @@ class XRayPhysicsModel:
+ 		safe_distances = np.maximum(distances, 1e-6)
+ 		return np.power(reference_distance / safe_distances, power).astype(np.float32, copy=False)
+ 
+-	def integral_to_image(self, line_integral, source_to_detector_distance_mm=None, projection_mode=None):
++	def integral_to_image(self, line_integral, source_to_detector_distance_mm=None, projection_mode=None, exposure_mask=None):
+ 		"""Convert integrated attenuation into a detector-space image value.
+ 
+ 		`output_mode == "intensity"` applies a Beer-Lambert style
+@@ -613,13 +619,15 @@ class XRayPhysicsModel:
+ 		mode = str(self.output_mode).lower()
+ 		if mode == "integral":
+ 			if distance_gain is None:
+-				return line_integral
++				return line_integral if exposure_mask is None else np.where(exposure_mask, line_integral, 0.0)
+ 			safe_gain = np.maximum(distance_gain, 1e-12)
+-			return line_integral - np.log(safe_gain)
++			result = line_integral - np.log(safe_gain)
++			return result if exposure_mask is None else np.where(exposure_mask, result, 0.0)
+ 		intensity = np.exp(-line_integral)
+ 		if distance_gain is not None:
+ 			intensity = intensity * distance_gain
+-		return np.maximum(float(self.intensity_floor), intensity)
++		intensity = np.maximum(float(self.intensity_floor), intensity)
++		return intensity if exposure_mask is None else np.where(exposure_mask, intensity, 0.0)
+ 
+ 
+ @dataclass
+@@ -793,6 +801,7 @@ class XRayProjectionCapture:
+ 	detector_image: np.ndarray
+ 	source_projections: list[XRaySourceProjection] = field(default_factory=list)
+ 	stats: XRayProjectionStats | None = None
++	exposure_mask: np.ndarray | None = None
+ 
+ 
+ 
+@@ -971,11 +980,35 @@ class XRayProjector:
+ 
+ 		_phase_timings["ray_setup"] = float(perf_counter() - start_time)
+ 
++		exposure_mask = np.ones((height, width), dtype=bool)
++		if geometry.collimation_enabled:
++			if not geometry.is_cone_beam():
++				raise ValueError("Physical rectangular collimation is supported only for cone-beam projection.")
++			if geometry.beam_geometry is None:
++				raise ValueError("Physical collimation is enabled but no directional beam geometry is available.")
++			beam = geometry.beam_geometry
++			# Both detector sample positions and beam frame are in reference coordinates;
++			# projection transforms are deliberately not applied a second time here.
++			pixel_centers_ref = (
++				np.asarray(geometry.detector_origin_ref, dtype=np.float32)
++				+ np.asarray(geometry.detector_u_ref, dtype=np.float32) * col_grid[:, :, np.newaxis]
++				+ np.asarray(geometry.detector_v_ref, dtype=np.float32) * row_grid[:, :, np.newaxis]
++			)
++			rays = pixel_centers_ref - np.asarray(geometry.source_position_ref, dtype=np.float32)
++			axis = np.asarray(beam.beam_axis_ref, dtype=np.float32)
++			horizontal = np.asarray(beam.beam_horizontal_ref, dtype=np.float32)
++			vertical = np.asarray(beam.beam_vertical_ref, dtype=np.float32)
++			forward = np.einsum("...i,i->...", rays, axis)
++			limit_u = forward * (beam.field_width_cm * 5.0 / beam.field_reference_distance_mm)
++			limit_v = forward * (beam.field_height_cm * 5.0 / beam.field_reference_distance_mm)
++			exposure_mask = (forward > 0.0) & (np.abs(np.einsum("...i,i->...", rays, horizontal)) <= limit_u) & (np.abs(np.einsum("...i,i->...", rays, vertical)) <= limit_v)
++
+ 		# Vectorized AABB intersection for all rays
+ 		_t_aabb_start = perf_counter()
+ 		t_starts, t_ends, hit_mask = _ray_box_intersections_vectorized(
+ 			ray_origins, ray_directions, scene_min_world, scene_max_world,
+ 		)
++		hit_mask &= exposure_mask.reshape(-1)
+ 		t_starts = np.maximum(t_starts, 0.0)
+ 		hit_mask &= t_ends > t_starts
+ 		_phase_timings["aabb_intersection"] = float(perf_counter() - _t_aabb_start)
+@@ -1153,6 +1186,7 @@ class XRayProjector:
+ 			projection_flat,
+ 			source_to_detector_distance_mm=source_to_detector_distance_mm,
+ 			projection_mode="cone" if geometry.is_cone_beam() else "parallel",
++			exposure_mask=exposure_mask.reshape(-1),
+ 		).reshape(height, width)
+ 		_phase_timings["physics_conversion"] = float(perf_counter() - _t_physics_start)
+ 		line_integral_image = projection_flat.reshape(height, width).astype(np.float32, copy=True)
+@@ -1171,6 +1205,7 @@ class XRayProjector:
+ 				per_source_projection_flat[source_index],
+ 				source_to_detector_distance_mm=source_to_detector_distance_mm,
+ 				projection_mode=projection_mode_name,
++				exposure_mask=exposure_mask.reshape(-1),
+ 			).reshape(height, width).astype(np.float32, copy=False)
+ 			source_projections.append(XRaySourceProjection(
+ 				source_index=int(source_index),
+@@ -1201,6 +1236,7 @@ class XRayProjector:
+ 			detector_image=projection.astype(np.float32, copy=False),
+ 			source_projections=source_projections,
+ 			stats=stats,
++			exposure_mask=exposure_mask,
+ 		)
+ 
+ 	def project_config(self, config, return_stats=False, progress_callback=None):

@@ -165,6 +165,8 @@ class XRayProjectionGeometry:
 	depth_window_mm: Sequence[float] | None = None
 	depth_window_origin_ref: Sequence[float] | None = None
 	depth_window_axis_ref: Sequence[float] | None = None
+	beam_geometry: RectangularBeamGeometry | None = None
+	collimation_enabled: bool = False
 
 
 	@classmethod
@@ -183,6 +185,8 @@ class XRayProjectionGeometry:
 		depth_window_mm=None,
 		depth_window_origin_ref=None,
 		depth_window_axis_ref=None,
+		beam_geometry=None,
+		collimation_enabled=False,
 	):
 		"""Build geometry from a detector center, orientation and either size or pixel spacing."""
 		height = int(detector_shape_hw[0])
@@ -239,6 +243,8 @@ class XRayProjectionGeometry:
 			depth_window_mm=depth_window_mm,
 			depth_window_origin_ref=depth_window_origin_ref,
 			depth_window_axis_ref=depth_window_axis_ref,
+			beam_geometry=beam_geometry,
+			collimation_enabled=bool(collimation_enabled),
 		)
 
 	def detector_pixel_size_mm_uv(self):
@@ -598,7 +604,7 @@ class XRayPhysicsModel:
 		safe_distances = np.maximum(distances, 1e-6)
 		return np.power(reference_distance / safe_distances, power).astype(np.float32, copy=False)
 
-	def integral_to_image(self, line_integral, source_to_detector_distance_mm=None, projection_mode=None):
+	def integral_to_image(self, line_integral, source_to_detector_distance_mm=None, projection_mode=None, exposure_mask=None):
 		"""Convert integrated attenuation into a detector-space image value.
 
 		`output_mode == "intensity"` applies a Beer-Lambert style
@@ -613,13 +619,15 @@ class XRayPhysicsModel:
 		mode = str(self.output_mode).lower()
 		if mode == "integral":
 			if distance_gain is None:
-				return line_integral
+				return line_integral if exposure_mask is None else np.where(exposure_mask, line_integral, 0.0)
 			safe_gain = np.maximum(distance_gain, 1e-12)
-			return line_integral - np.log(safe_gain)
+			result = line_integral - np.log(safe_gain)
+			return result if exposure_mask is None else np.where(exposure_mask, result, 0.0)
 		intensity = np.exp(-line_integral)
 		if distance_gain is not None:
 			intensity = intensity * distance_gain
-		return np.maximum(float(self.intensity_floor), intensity)
+		intensity = np.maximum(float(self.intensity_floor), intensity)
+		return intensity if exposure_mask is None else np.where(exposure_mask, intensity, 0.0)
 
 
 @dataclass
@@ -793,6 +801,7 @@ class XRayProjectionCapture:
 	detector_image: np.ndarray
 	source_projections: list[XRaySourceProjection] = field(default_factory=list)
 	stats: XRayProjectionStats | None = None
+	exposure_mask: np.ndarray | None = None
 
 
 
@@ -971,11 +980,35 @@ class XRayProjector:
 
 		_phase_timings["ray_setup"] = float(perf_counter() - start_time)
 
+		exposure_mask = np.ones((height, width), dtype=bool)
+		if geometry.collimation_enabled:
+			if not geometry.is_cone_beam():
+				raise ValueError("Physical rectangular collimation is supported only for cone-beam projection.")
+			if geometry.beam_geometry is None:
+				raise ValueError("Physical collimation is enabled but no directional beam geometry is available.")
+			beam = geometry.beam_geometry
+			# Both detector sample positions and beam frame are in reference coordinates;
+			# projection transforms are deliberately not applied a second time here.
+			pixel_centers_ref = (
+				np.asarray(geometry.detector_origin_ref, dtype=np.float32)
+				+ np.asarray(geometry.detector_u_ref, dtype=np.float32) * col_grid[:, :, np.newaxis]
+				+ np.asarray(geometry.detector_v_ref, dtype=np.float32) * row_grid[:, :, np.newaxis]
+			)
+			rays = pixel_centers_ref - np.asarray(geometry.source_position_ref, dtype=np.float32)
+			axis = np.asarray(beam.beam_axis_ref, dtype=np.float32)
+			horizontal = np.asarray(beam.beam_horizontal_ref, dtype=np.float32)
+			vertical = np.asarray(beam.beam_vertical_ref, dtype=np.float32)
+			forward = np.einsum("...i,i->...", rays, axis)
+			limit_u = forward * (beam.field_width_cm * 5.0 / beam.field_reference_distance_mm)
+			limit_v = forward * (beam.field_height_cm * 5.0 / beam.field_reference_distance_mm)
+			exposure_mask = (forward > 0.0) & (np.abs(np.einsum("...i,i->...", rays, horizontal)) <= limit_u) & (np.abs(np.einsum("...i,i->...", rays, vertical)) <= limit_v)
+
 		# Vectorized AABB intersection for all rays
 		_t_aabb_start = perf_counter()
 		t_starts, t_ends, hit_mask = _ray_box_intersections_vectorized(
 			ray_origins, ray_directions, scene_min_world, scene_max_world,
 		)
+		hit_mask &= exposure_mask.reshape(-1)
 		t_starts = np.maximum(t_starts, 0.0)
 		hit_mask &= t_ends > t_starts
 		_phase_timings["aabb_intersection"] = float(perf_counter() - _t_aabb_start)
@@ -1153,6 +1186,7 @@ class XRayProjector:
 			projection_flat,
 			source_to_detector_distance_mm=source_to_detector_distance_mm,
 			projection_mode="cone" if geometry.is_cone_beam() else "parallel",
+			exposure_mask=exposure_mask.reshape(-1),
 		).reshape(height, width)
 		_phase_timings["physics_conversion"] = float(perf_counter() - _t_physics_start)
 		line_integral_image = projection_flat.reshape(height, width).astype(np.float32, copy=True)
@@ -1171,6 +1205,7 @@ class XRayProjector:
 				per_source_projection_flat[source_index],
 				source_to_detector_distance_mm=source_to_detector_distance_mm,
 				projection_mode=projection_mode_name,
+				exposure_mask=exposure_mask.reshape(-1),
 			).reshape(height, width).astype(np.float32, copy=False)
 			source_projections.append(XRaySourceProjection(
 				source_index=int(source_index),
@@ -1201,6 +1236,7 @@ class XRayProjector:
 			detector_image=projection.astype(np.float32, copy=False),
 			source_projections=source_projections,
 			stats=stats,
+			exposure_mask=exposure_mask,
 		)
 
 	def project_config(self, config, return_stats=False, progress_callback=None):

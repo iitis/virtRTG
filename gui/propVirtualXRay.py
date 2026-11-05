@@ -90,6 +90,9 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		self._add_flow_control(scene_layout, "Objects", self.volumesLabel)
 		self._add_flow_control(scene_layout, "Preset", self.geometryPresetWidget)
 		self._add_flow_control(scene_layout, "Mode", self.modeCombo)
+		self.collimationCheck = QCheckBox("Enable physical rectangular collimation")
+		self.collimationCheck.setToolTip("Uses the directional beam geometry received from the device link. Cone-beam only.")
+		self._add_flow_control(scene_layout, "Beam", self.collimationCheck)
 		geomLayout.addWidget(sceneGroup)
 
 		detectorGroup, detector_layout = self._create_collapsible_flow_group("Detector", collapsed=True)
@@ -970,6 +973,7 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		"""Connect all editor widgets to their slots."""
 		self.applyGeometryPresetButton.clicked.connect(self.on_apply_geometry_preset)
 		self.modeCombo.currentTextChanged.connect(self.on_mode_changed)
+		self.collimationCheck.toggled.connect(self.on_collimation_toggled)
 		self.detectorCenterSpin.valueChanged.connect(self.on_detector_center_changed)
 		self.detectorNormalSpin.valueChanged.connect(self.on_detector_normal_changed)
 		self.detectorUpSpin.valueChanged.connect(self.on_detector_up_changed)
@@ -1131,6 +1135,7 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 			return
 		self.blockAll(True)
 		self.modeCombo.setCurrentText(str(obj.projection_mode))
+		self.collimationCheck.setChecked(bool(getattr(obj, "physical_collimation_enabled", False)))
 		self.detectorCenterSpin.setValue(obj.detector_center_ref)
 		self.detectorNormalSpin.setValue(obj.detector_normal_ref)
 		self.detectorUpSpin.setValue(obj.detector_up_ref)
@@ -1208,6 +1213,14 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		if obj is None:
 			return
 		obj.projection_mode = str(mode).lower()
+		self._after_change(obj)
+
+	def on_collimation_toggled(self, enabled):
+		"""Set the explicit physical beam collimation mode."""
+		obj = self.obj_ref()
+		if obj is None:
+			return
+		obj.physical_collimation_enabled = bool(enabled)
 		self._after_change(obj)
 
 	@pyqtSlot()

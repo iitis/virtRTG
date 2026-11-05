@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 
 import numpy as np
+import pytest
 
 from dpVision import Mesh, Motion, Transform, Volumetric
 
@@ -15,6 +17,7 @@ from plugins.virtRTG.xray.xrayProjection import (
 	XRayProjectionConfig,
 	XRayProjectionGeometry,
 	XRayProjectionQualityProfile,
+	RectangularBeamGeometry,
 	XRayScene,
 )
 from plugins.virtRTG.xray.xrayAnnotationOverlay import (
@@ -24,6 +27,27 @@ from plugins.virtRTG.xray.xrayAnnotationOverlay import (
 )
 from plugins.virtRTG.detectorImage import DetectorImage
 from plugins.virtRTG.virtualXRay import VirtualXRay
+
+
+def test_virtual_xray_mode_change_runs_property_refresh():
+	"""Mode selection invalidates and refreshes the active VirtualXRay properties."""
+	from plugins.virtRTG.gui.propVirtualXRay import PropVirtualXRay
+
+	class _PanelStub:
+		def __init__(self):
+			self.obj = VirtualXRay()
+			self.changed = []
+
+		def obj_ref(self):
+			return self.obj
+
+		def _after_change(self, obj):
+			self.changed.append(obj)
+
+	panel = _PanelStub()
+	PropVirtualXRay.on_mode_changed(panel, "parallel")
+	assert panel.obj.projection_mode == "parallel"
+	assert panel.changed == [panel.obj]
 
 
 def _translated_transform(tx=0.0, ty=0.0, tz=0.0):
@@ -230,6 +254,144 @@ def test_scene_project_capture_exposes_additive_per_source_line_integrals():
 		capture.line_integral_image,
 		atol=1e-6,
 	)
+
+
+def test_rectangular_collimation_mask_uses_beam_axes_and_skips_unexposed_rays():
+	"""Use analytic field boundaries for rotated-beam pixel exposure and integration."""
+	geometry = XRayProjectionGeometry.from_detector_pose(
+		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
+		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[3, 3],
+		detector_pixel_size_mm=10.0, source_position_ref=[0.0, 0.0, 0.0],
+		beam_geometry=RectangularBeamGeometry((0, 0, 1), (1, 0, 0), (0, 1, 0), 1.0, 100.0, 100.0),
+		collimation_enabled=True,
+	)
+	config = XRayProjectionConfig(geometry, XRayPhysicsModel(output_mode="intensity", intensity_floor=0.2))
+	scene = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)])
+	capture = scene.project_capture(config, return_stats=True)
+	expected = np.array([[False, True, False], [False, True, False], [False, True, False]])
+	assert np.array_equal(capture.exposure_mask, expected)
+	assert capture.stats.traced_pixels == 2
+	assert capture.detector_image[1, 1] > 0.0
+	assert capture.detector_image[0, 1] == 1.0
+	assert np.all(capture.detector_image[~expected] == 0.0)
+
+
+def test_beam_geometry_is_inert_until_explicitly_enabled_and_reversed_beam_is_empty():
+	"""Keep beam values descriptive unless enabled and handle zero-overlap detectors."""
+	beam = RectangularBeamGeometry((0, 0, -1), (1, 0, 0), (0, -1, 0), 20.0, 20.0, 100.0)
+	geometry = XRayProjectionGeometry.from_detector_pose(
+		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
+		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[1, 1],
+		detector_pixel_size_mm=1.0, source_position_ref=[0.0, 0.0, 0.0], beam_geometry=beam,
+	)
+	scene = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)])
+	unrestricted = scene.project_capture(XRayProjectionConfig(geometry, XRayPhysicsModel(output_mode="integral")))
+	assert unrestricted.exposure_mask[0, 0]
+	enabled = replace(geometry, collimation_enabled=True)
+	collimated = scene.project_capture(XRayProjectionConfig(enabled, XRayPhysicsModel(output_mode="intensity", intensity_floor=0.4)), return_stats=True)
+	assert not collimated.exposure_mask.any()
+	assert collimated.stats.traced_pixels == 0
+	assert np.all(collimated.detector_image == 0.0)
+
+
+def test_rotating_beam_with_fixed_source_and_detector_changes_only_exposure_selection():
+	"""Rotate only the beam frame and keep each still-exposed ray's attenuation unchanged."""
+	geometry = XRayProjectionGeometry.from_detector_pose(
+		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
+		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[3, 3],
+		detector_pixel_size_mm=10.0, source_position_ref=[0.0, 0.0, 0.0],
+		beam_geometry=RectangularBeamGeometry((0, 0, 1), (1, 0, 0), (0, 1, 0), 20.0, 100.0, 100.0),
+		collimation_enabled=True,
+	)
+	scene = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)])
+	model = XRayPhysicsModel(output_mode="integral")
+	initial = scene.project_capture(XRayProjectionConfig(geometry, model))
+	rotated_beam = RectangularBeamGeometry((1, 0, 0), (0, -1, 0), (0, 0, -1), 200.0, 200.0, 100.0)
+	rotated = scene.project_capture(XRayProjectionConfig(replace(geometry, beam_geometry=rotated_beam), model))
+	assert not np.array_equal(initial.exposure_mask, rotated.exposure_mask)
+	shared = initial.exposure_mask & rotated.exposure_mask
+	assert shared.any()
+	assert np.array_equal(initial.line_integral_image[shared], rotated.line_integral_image[shared])
+
+
+def test_covering_beam_matches_unrestricted_and_parallel_collimation_is_rejected():
+	"""Preserve cone results for a covering field and reject unsupported parallel mode."""
+	beam = RectangularBeamGeometry((0, 0, 1), (1, 0, 0), (0, 1, 0), 20.0, 20.0, 100.0)
+	cone = XRayProjectionGeometry.from_detector_pose(
+		detector_center_ref=[0.0, 0.0, 100.0], detector_normal_ref=[0.0, 0.0, -1.0],
+		detector_up_ref=[0.0, 1.0, 0.0], detector_shape_hw=[3, 3], detector_pixel_size_mm=10.0,
+		source_position_ref=[0.0, 0.0, 0.0], beam_geometry=beam,
+	)
+	scene = XRayScene.from_sample_sources([_ConstantBoxSource(0.5)])
+	model = XRayPhysicsModel(output_mode="intensity")
+	plain = scene.project_capture(XRayProjectionConfig(cone, model))
+	covered = scene.project_capture(XRayProjectionConfig(replace(cone, collimation_enabled=True), model))
+	assert covered.exposure_mask.all()
+	assert np.array_equal(plain.line_integral_image, covered.line_integral_image)
+	assert np.array_equal(plain.detector_image, covered.detector_image)
+	parallel = XRayProjectionGeometry(
+		detector_origin_ref=[0.0, 0.0, 0.0], detector_u_ref=[1.0, 0.0, 0.0],
+		detector_v_ref=[0.0, 1.0, 0.0], detector_shape_hw=[1, 1], ray_direction_ref=[0, 0, 1],
+		beam_geometry=beam, collimation_enabled=True,
+	)
+	with np.testing.assert_raises_regex(ValueError, "only for cone-beam"):
+		scene.project_capture(XRayProjectionConfig(parallel, model))
+
+
+def test_detector_presentation_preserves_acquisition_unexposed_zeros():
+	"""Do not let windowing or transfer curves turn unexposed pixels into signal."""
+	image = DetectorImage(array=np.array([[0.0, 0.5]], dtype=np.float32))
+	image.exposure_mask = np.array([[False, True]])
+	image.set_transfer_points_pct([(0.0, 100.0), (100.0, 100.0)])
+	assert image.get_display_array()[0, 0] == 0.0
+
+
+def test_detector_npz_package_roundtrips_exposure_mask_and_accepts_legacy_package(tmp_path):
+	"""Validate declared NPZ masks and accept older mask-free package metadata."""
+	image = DetectorImage(array=np.array([[0.0, 0.5]], dtype=np.float32))
+	image.exposure_mask = np.array([[False, True]])
+	path = tmp_path / "masked.npz"
+	image.export_array(path)
+	loaded = DetectorImage()
+	loaded.import_array(path)
+	assert np.array_equal(loaded.exposure_mask, image.exposure_mask)
+
+	with np.load(path, allow_pickle=False) as archive:
+		arrays = {key: np.asarray(archive[key]).copy() for key in archive.files}
+	metadata = json.loads(str(arrays["metadata_json"].tolist()))
+	mask_key = metadata["exposure_mask"]["archive_key"]
+
+	legacy_arrays = dict(arrays)
+	legacy_metadata = dict(metadata)
+	legacy_metadata.pop("exposure_mask")
+	legacy_arrays["metadata_json"] = np.asarray(json.dumps(legacy_metadata), dtype=np.str_)
+	legacy_path = tmp_path / "legacy.npz"
+	np.savez_compressed(legacy_path, **legacy_arrays)
+	legacy = DetectorImage()
+	legacy.import_array(legacy_path)
+	assert legacy.exposure_mask is None
+	assert legacy.raw_array.shape == (1, 2)
+
+	missing_arrays = dict(arrays)
+	missing_arrays.pop(mask_key)
+	missing_path = tmp_path / "missing-mask.npz"
+	np.savez_compressed(missing_path, **missing_arrays)
+	with pytest.raises(ValueError, match="missing exposure mask array entry"):
+		DetectorImage().import_array(missing_path)
+
+	wrong_shape_arrays = dict(arrays)
+	wrong_shape_arrays[mask_key] = np.ones((2, 2), dtype=np.uint8)
+	wrong_shape_path = tmp_path / "wrong-shape-mask.npz"
+	np.savez_compressed(wrong_shape_path, **wrong_shape_arrays)
+	with pytest.raises(ValueError, match="shape must match"):
+		DetectorImage().import_array(wrong_shape_path)
+
+	invalid_values_arrays = dict(arrays)
+	invalid_values_arrays[mask_key] = np.array([[0, 2]], dtype=np.uint8)
+	invalid_values_path = tmp_path / "invalid-mask-values.npz"
+	np.savez_compressed(invalid_values_path, **invalid_values_arrays)
+	with pytest.raises(ValueError, match="only 0 and 1"):
+		DetectorImage().import_array(invalid_values_path)
 
 
 def test_scene_project_respects_ray_depth_window_limits():

@@ -23,7 +23,7 @@ from .xray.xrayAnnotationOverlay import (
 	overlay_projection_set_from_payload,
 	overlay_projection_set_to_payload,
 )
-from .xray.xrayProjection import XRayPhysicsModel
+from .xray.xrayProjection import RectangularBeamGeometry, XRayPhysicsModel
 from .xray.xraySource import (
 	XRayMaterialResponseConfig,
 	ensure_xray_source_config,
@@ -361,6 +361,17 @@ def _virtual_xray_payload(virtual_xray):
 		"version": 2,
 		"geometry": {
 			"projection_mode": str(virtual_xray.projection_mode),
+			"physical_collimation_enabled": bool(getattr(virtual_xray, "physical_collimation_enabled", False)),
+			"directional_beam_geometry": (
+				None if getattr(virtual_xray, "directional_beam_geometry", None) is None else {
+					"beam_axis_ref": list(virtual_xray.directional_beam_geometry.beam_axis_ref),
+					"beam_horizontal_ref": list(virtual_xray.directional_beam_geometry.beam_horizontal_ref),
+					"beam_vertical_ref": list(virtual_xray.directional_beam_geometry.beam_vertical_ref),
+					"field_width_cm": float(virtual_xray.directional_beam_geometry.field_width_cm),
+					"field_height_cm": float(virtual_xray.directional_beam_geometry.field_height_cm),
+					"field_reference_distance_mm": float(virtual_xray.directional_beam_geometry.field_reference_distance_mm),
+				}
+			),
 			"detector_center_ref": list(np.asarray(virtual_xray.detector_center_ref, dtype=np.float64).reshape(3)),
 			"detector_normal_ref": list(np.asarray(virtual_xray.detector_normal_ref, dtype=np.float64).reshape(3)),
 			"detector_up_ref": list(np.asarray(virtual_xray.detector_up_ref, dtype=np.float64).reshape(3)),
@@ -593,6 +604,11 @@ def _apply_virtual_xray_payload(virtual_xray, payload):
 	"""Apply one serialized virtual X-ray payload to an existing object."""
 	geometry = payload.get("geometry", {})
 	virtual_xray.projection_mode = str(geometry.get("projection_mode", virtual_xray.projection_mode))
+	virtual_xray.physical_collimation_enabled = bool(geometry.get("physical_collimation_enabled", False))
+	beam_payload = geometry.get("directional_beam_geometry")
+	virtual_xray.directional_beam_geometry = (
+		None if beam_payload is None else RectangularBeamGeometry(**dict(beam_payload))
+	)
 	virtual_xray.detector_center_ref = np.asarray(geometry.get("detector_center_ref", virtual_xray.detector_center_ref), dtype=np.float32)
 	virtual_xray.detector_normal_ref = np.asarray(geometry.get("detector_normal_ref", virtual_xray.detector_normal_ref), dtype=np.float32)
 	virtual_xray.detector_up_ref = np.asarray(geometry.get("detector_up_ref", virtual_xray.detector_up_ref), dtype=np.float32)

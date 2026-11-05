@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1
+
+- Added opt-in physical rectangular collimation for cone-beam projections, controlled by `VirtualXRay.physical_collimation_enabled`; directional beam geometry alone remains descriptive unless enabled.
+- Generated an acquisition-specific exposure mask from the independent directional beam frame and skip attenuation integration for rays outside the field.
+- Preserved unexposed-pixel primary-signal semantics through physics conversion, projection caching, DetectorImage presentation, and the active NPZ package workflow.
+- Persisted directional beam geometry and collimation mode in scene files, preserving compatibility with legacy scenes and NPZ packages without masks.
+- Kept parallel-beam projection unrestricted; enabled physical collimation in parallel mode is rejected explicitly.
+
 ## 0.5.0
 
 - Added optional `RectangularBeamGeometry` to represent the tube-derived beam axis, rectangular field orientation, collimator width and height, and 1000 mm field reference distance.

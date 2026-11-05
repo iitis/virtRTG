@@ -1,6 +1,6 @@
 # virtRTG Baseline
 
-Status: version 0.5.0 - Directional X-ray Beam Geometry is accepted. Full interactive GUI verification remains outstanding.
+Status: version 0.5.1 - Physical Beam Collimation is accepted. Full manual browser-to-plugin GUI validation remains outstanding.
 
 ## Accepted 0.4.0 architecture
 
@@ -21,7 +21,17 @@ Status: version 0.5.0 - Directional X-ray Beam Geometry is accepted. Full intera
 - The rectangular field dimensions use centimeters and refer to a plane 1000 mm from the focal spot. The field diverges from the ideal point source; containment predicates are available but are not connected to projection generation.
 - Device pose mapping applies the accepted Three.js Euler XYZ rotation to local positions and directions. The full rigid `T_RS` transform maps positions from station frame S to VirtualXRay reference frame R, while only its rotational part maps directions. `T_WR` is not applied. Beam direction comes from the tube and is not inferred from the detector.
 - The GUI-thread Device Adapter applies the beam alongside source and detector geometry. If geometry rebuilding fails, it restores the previous beam and source/detector fields. Protocol v1 and the existing detector normal reversal remain unchanged.
-- Legacy projection behavior is preserved: `build_geometry()` and all projection algorithms ignore the optional beam value, and device updates do not trigger projection.
+- At the 0.5.0 baseline, projection algorithms did not use this optional beam value. Version 0.5.1 connects it to optional cone-beam collimation as described below. Device updates still do not trigger projection.
+
+## Accepted 0.5.1 physical beam collimation
+
+- Cone-beam projection optionally restricts primary exposure to the forward rectangular divergent field described by `RectangularBeamGeometry`. Beam axis, horizontal and vertical axes, field width and height, and reference distance remain independent of detector orientation; beam direction is never inferred from the detector.
+- Collimation is explicitly enabled by `VirtualXRay.physical_collimation_enabled`, which defaults to `False`. A directional beam value alone does not enable it. The VirtualXRay properties panel exposes the explicit mode. Enabled collimation requires beam geometry and cone-beam projection; parallel-beam collimation raises a clear error.
+- The projector computes a vectorized detector exposure mask from focal spot rays and the beam frame in VirtualXRay reference coordinates. It intersects exposure with scene-intersection and depth-window masks before attenuation integration, skipping work for unexposed rays. Existing attenuation integration for active rays is unchanged.
+- Physical intensity conversion applies attenuation and configured geometric gain to exposed rays. Unexposed primary signal is zero, including after intensity-floor handling. Exposed rays that miss anatomy retain unattenuated primary intensity. Integral values outside the field are zero placeholders and are not measurements; the independent exposure mask records validity. No scatter or detector dark-current signal is modeled.
+- The exposure mask is retained on the projection capture and `VirtualXRay.last_exposure_mask` cache, then copied into `DetectorImage`. DetectorImage reapplies the mask after presentation mapping so unexposed pixels remain distinguishable from exposed zero-attenuation pixels. Per-source outputs share the acquisition mask.
+- Scene geometry serialization includes the optional directional beam axes and field parameters. Loading reconstructs them through `RectangularBeamGeometry`; older scenes without the field keep no beam geometry and collimation disabled. The active DetectorImage NPZ package serializes its mask and accepts legacy packages without a mask, while rejecting malformed declared masks. NPY and text array formats cannot preserve mask metadata.
+- Device-state changes do not automatically run projections, and an acquired exposure mask remains associated with its acquisition if device geometry later changes.
 
 ## Current limitations
 
@@ -29,7 +39,9 @@ Status: version 0.5.0 - Directional X-ray Beam Geometry is accepted. Full intera
 - Phantom pose is received and mapped separately but is not applied to anatomy. Table pose is received but not applied.
 - Acquisition requests are validated and acknowledged without generating images.
 - The browser does not stream pose updates during gizmo dragging; it sends the pose when the drag ends.
-- Directional beam geometry is not yet connected to the projection engine. Generated pixels are not masked or otherwise restricted by the rectangular field.
+- Physical collimation is an ideal hard-edged primary-radiation model. Scatter, dark current, electronic noise, focal-spot penumbra, heel effect, and spectral emission are not modeled. Parallel-beam collimation is unsupported.
+- Full manual browser-to-plugin GUI validation remains outstanding; automated Qt integration tests cover device updates, rollback, and the no-automatic-projection behavior.
+- `XRayPhysicsModel` modularization into separate tube, collimator, and detector classes is deferred; no such classes are part of version 0.5.1.
 - Device parameters and geometry synchronization are not bidirectional.
 - Full browser interaction and workspace-selection behavior still require manual verification.
 
@@ -43,11 +55,10 @@ These checks do not confirm full interactive GUI behavior. In particular, a real
 
 ## Planned work, not implemented
 
-The following are possible future directions. They are not requirements or claims about version 0.4.0:
+The following are possible future directions and are not part of the accepted 0.5.1 implementation:
 
 - Persistent ownership of a `VirtualXRay` by a remote-control session.
 - Restricting local edits to device parameters while remote control owns them.
-- Physical beam collimation and an exposure mask.
-- Correct handling of unexposed detector pixels in raw and intensity outputs.
 - Registration between the simulator phantom and anatomy.
 - Potential multi-session educational operation through one server with independent `VirtualXRay` sessions.
+- Further physical detector and source modeling, including the deferred model modularization.

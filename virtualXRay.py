@@ -211,6 +211,7 @@ class VirtualXRay(Object):
 		self.ray_direction_ref = np.array([0.0, 0.0, 1.0], dtype=np.float32)
 		self.projection_mode = "cone"
 		self.directional_beam_geometry = None
+		self.physical_collimation_enabled = False
 		self.motion_frame_mode = "active"
 		self.step_mm = 1.0
 		self.depth_window_mode = "off"
@@ -341,6 +342,8 @@ class VirtualXRay(Object):
 			self.last_raw_projection = None
 		if not hasattr(self, "last_source_projections"):
 			self.last_source_projections = []
+		if not hasattr(self, "last_exposure_mask"):
+			self.last_exposure_mask = None
 
 	def child_transform_relative_to_self(self, child):
 		"""Return one descendant transform expressed in the local frame of this X-ray object."""
@@ -610,6 +613,8 @@ class VirtualXRay(Object):
 			depth_window_mm=self.depth_window_mm if geometry_depth_mode is not None else None,
 			depth_window_origin_ref=self.depth_window_origin_ref if geometry_depth_mode == "planar" else None,
 			depth_window_axis_ref=depth_axis_ref,
+			beam_geometry=getattr(self, "directional_beam_geometry", None),
+			collimation_enabled=bool(getattr(self, "physical_collimation_enabled", False)),
 		)
 
 	def build_scalar_preprocessor(self):
@@ -904,6 +909,10 @@ class VirtualXRay(Object):
 		self.last_line_integral_projection = np.asarray(capture.line_integral_image, dtype=np.float32)
 		self.last_raw_projection = np.asarray(capture.detector_image, dtype=np.float32)
 		self.last_source_projections = list(capture.source_projections)
+		self.last_exposure_mask = (
+			np.asarray(capture.exposure_mask, dtype=bool).copy()
+			if capture.exposure_mask is not None else None
+		)
 		self.project_scene_annotations()
 		if return_stats:
 			return self.last_raw_projection, capture.stats
@@ -942,6 +951,7 @@ class VirtualXRay(Object):
 			line_integral_image.reshape(-1),
 			source_to_detector_distance_mm=distances,
 			projection_mode="cone" if geometry.is_cone_beam() else "parallel",
+			exposure_mask=(None if getattr(self, "last_exposure_mask", None) is None else self.last_exposure_mask.reshape(-1)),
 		).reshape(line_integral_image.shape).astype(np.float32, copy=False)
 
 	def _resolve_projection_cache(self, stage):
@@ -1047,6 +1057,10 @@ class VirtualXRay(Object):
 						self.last_raw_projection = None
 						self.last_line_integral_projection = None
 						self.last_source_projections = []
+						self.last_exposure_mask = (
+							np.asarray(detector_image.exposure_mask, dtype=bool).copy()
+							if detector_image.exposure_mask is not None else None
+						)
 						self.last_projected_annotations = detector_image.overlay_projection_set
 						for layer in detector_image.package_layers:
 							layer_array = detector_image.package_images.get(layer["key"], None)
@@ -1142,6 +1156,10 @@ class VirtualXRay(Object):
 				np.asarray(self.last_line_integral_projection, dtype=np.float32).copy()
 				if self.last_line_integral_projection is not None else None
 			),
+			"exposure_mask": (
+				np.asarray(self.last_exposure_mask, dtype=bool).copy()
+				if self.last_exposure_mask is not None else None
+			),
 			"source_projections": [],
 		}
 		for source_projection in self.last_source_projections:
@@ -1160,6 +1178,8 @@ class VirtualXRay(Object):
 		payload = {} if payload is None else dict(payload)
 		raw_projection = payload.get("raw_projection", None)
 		line_integral_projection = payload.get("line_integral_projection", None)
+		exposure_mask = payload.get("exposure_mask", None)
+		self.last_exposure_mask = None if exposure_mask is None else np.asarray(exposure_mask, dtype=bool)
 		self.last_raw_projection = (
 			None if raw_projection is None
 			else np.asarray(raw_projection, dtype=np.float32)

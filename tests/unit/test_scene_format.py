@@ -14,6 +14,7 @@ from dpVision.parser import Parser
 
 from plugins.virtRTG.sceneFormat import build_virtual_xray_scene_xml, load_virtual_xray_scene, save_virtual_xray_scene
 from plugins.virtRTG.virtualXRay import VirtualXRay
+from plugins.virtRTG.xray.xrayProjection import RectangularBeamGeometry
 from plugins.virtRTG.xray.xraySource import (
 	XRayMaterialResponseConfig,
 	get_xray_material_response_config,
@@ -92,6 +93,15 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
 		(0.0, 0.015),
 		(1000.0, 0.05),
 	]
+	virtual_xray.physical_collimation_enabled = True
+	virtual_xray.directional_beam_geometry = RectangularBeamGeometry(
+		beam_axis_ref=(0.0, -1.0, 0.0),
+		beam_horizontal_ref=(1.0, 0.0, 0.0),
+		beam_vertical_ref=(0.0, 0.0, 1.0),
+		field_width_cm=32.0,
+		field_height_cm=24.0,
+		field_reference_distance_mm=1000.0,
+	)
 
 	transform = Transform()
 	transform.label = "source-transform"
@@ -127,6 +137,10 @@ def test_scene_export_can_be_loaded_back_into_virtual_xray(tmp_path):
 		(0.0, 0.015),
 		(1000.0, 0.05),
 	]
+	assert imported.physical_collimation_enabled is True
+	assert imported.directional_beam_geometry == virtual_xray.directional_beam_geometry
+	assert imported.build_geometry().collimation_enabled is True
+	assert imported.build_geometry().beam_geometry == virtual_xray.directional_beam_geometry
 	assert len(imported.children()) == 1
 	imported_transform = imported.children()[0]
 	assert isinstance(imported_transform, Transform)
@@ -181,6 +195,8 @@ def test_scene_import_creates_safe_hidden_placeholder_for_missing_volume_files(t
 	imported_volume = imported.children()[0]
 
 	assert isinstance(imported_volume, Volumetric)
+	assert imported.directional_beam_geometry is None
+	assert imported.physical_collimation_enabled is False
 	assert imported_volume.visible is False
 	assert imported_volume.shape == (1, 1, 1)
 	assert len(imported_volume.metadata) == 1

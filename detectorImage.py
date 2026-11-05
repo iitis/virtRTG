@@ -38,6 +38,7 @@ class DetectorImage(Object):
 		self.source_stage = str(source_stage)
 		self.source_virtual_xray_label = ""
 		self.raw_array = None
+		self.exposure_mask = None
 		self.presentation_mode = "digital"
 		self.presentation_invert = False
 		self.presentation_gamma = 1.0
@@ -567,6 +568,8 @@ class DetectorImage(Object):
 			).astype(np.float32, copy=False)
 		if bool(self.display_only_window_range):
 			normalized = np.where(self._window_mask(self.raw_array), normalized, 0.0).astype(np.float32, copy=False)
+		if self.exposure_mask is not None and self.exposure_mask.shape == normalized.shape:
+			normalized = np.where(self.exposure_mask, normalized, 0.0).astype(np.float32, copy=False)
 		return np.clip(normalized, 0.0, 1.0).astype(np.float32, copy=False)
 
 	def set_projected_annotations(self, overlay_projection_set):
@@ -672,6 +675,11 @@ class DetectorImage(Object):
 			archive_key = f"image_{layer_index:03d}_{layer_key}"
 			arrays[archive_key] = np.asarray(array, dtype=np.float32)
 			image_refs[layer_key] = self._npz_array_ref_payload(archive_key, array)
+		mask_ref = None
+		if self.exposure_mask is not None and self.exposure_mask.shape == self.raw_array.shape:
+			mask_key = "exposure_mask"
+			arrays[mask_key] = np.asarray(self.exposure_mask, dtype=np.uint8)
+			mask_ref = {"storage": "npz_entry", "archive_key": mask_key, "dtype": "uint8", "shape": list(self.exposure_mask.shape)}
 		metadata = {
 			"schema": self.PACKAGE_SCHEMA,
 			"version": self.PACKAGE_VERSION,
@@ -687,6 +695,7 @@ class DetectorImage(Object):
 			},
 			"layers": [dict(layer) for layer in package_layers],
 			"images": image_refs,
+			"exposure_mask": mask_ref,
 		}
 		return metadata, arrays
 
@@ -747,6 +756,37 @@ class DetectorImage(Object):
 			if archive_key not in archive:
 				raise ValueError(f"Detector package is missing array entry: {archive_key}")
 			package_images[key] = np.asarray(archive[archive_key], dtype=np.float32)
+		mask_payload = payload.get("exposure_mask")
+		self.exposure_mask = None
+		if mask_payload is not None:
+			if not isinstance(mask_payload, dict):
+				raise ValueError("Detector package exposure_mask must be a mapping or null.")
+			if str(mask_payload.get("storage", "")).strip().lower() != "npz_entry":
+				raise ValueError("Detector package exposure mask must reference an NPZ entry.")
+			if archive is None:
+				raise ValueError("Detector package exposure mask references an NPZ entry, but no archive was provided.")
+			mask_key = str(mask_payload.get("archive_key", "")).strip()
+			if not mask_key:
+				raise ValueError("Detector package exposure mask reference is missing archive_key.")
+			if mask_key not in archive:
+				raise ValueError(f"Detector package is missing exposure mask array entry: {mask_key}")
+			mask_values = np.asarray(archive[mask_key])
+			if mask_values.ndim != 2:
+				raise ValueError("Detector package exposure mask must be a 2D array.")
+			if mask_values.dtype.kind not in "biuf" or not np.all(np.isfinite(mask_values)):
+				raise ValueError("Detector package exposure mask values must be boolean or numeric 0/1 values.")
+			if not np.all((mask_values == 0) | (mask_values == 1)):
+				raise ValueError("Detector package exposure mask values must contain only 0 and 1.")
+			active_key = payload.get("active_layer_key")
+			active_image = package_images.get(str(active_key))
+			if active_image is not None and mask_values.shape != active_image.shape:
+				raise ValueError("Detector package exposure mask shape must match the active package image.")
+			if any(mask_values.shape != image.shape for image in package_images.values()):
+				raise ValueError("Detector package exposure mask shape must match every package image.")
+			declared_shape = mask_payload.get("shape")
+			if declared_shape is not None and tuple(declared_shape) != mask_values.shape:
+				raise ValueError("Detector package exposure mask shape does not match its metadata.")
+			self.exposure_mask = mask_values.astype(bool, copy=False)
 		self.set_projection_package(
 			package_images=package_images,
 			package_layers=list(payload.get("layers", [])),
@@ -763,6 +803,8 @@ class DetectorImage(Object):
 		defaults = defaults_getter() if callable(defaults_getter) else getattr(virtual_xray, "detector_image_defaults", None)
 		self.apply_presentation_defaults(defaults)
 		self.set_projected_annotations(getattr(virtual_xray, "last_projected_annotations", None))
+		mask = getattr(virtual_xray, "last_exposure_mask", None)
+		self.exposure_mask = None if mask is None else np.asarray(mask, dtype=bool).copy()
 		package_images = {}
 		package_layers = []
 		if getattr(virtual_xray, "last_raw_projection", None) is not None:
