@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- Completed and accepted the physical-model architecture audit and staged
+  0.6.x migration design, including explicit boundaries for acquisition
+  configuration, transport, detector response, diagnostics, and presentation.
+- Documented preservation requirements for existing research workflows and legacy `integral`/`intensity` output semantics.
+- Documentation/design-only release; no new simulation functionality or physical-model implementation was introduced.
+
 ## 0.5.2
 
 - Added standalone rectangular collimation controls for field size, reference distance, horizontal and vertical beam steering, and beam roll.

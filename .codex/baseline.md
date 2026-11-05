@@ -1,6 +1,59 @@
 # virtRTG Baseline
 
-Status: version 0.5.2 - Standalone Collimation Controls is accepted. The standalone collimation controls, H/V steering, beam roll, and projection behavior were manually verified. Full manual browser-to-plugin GUI validation remains outstanding.
+Status: version 0.6.0 architecture design is accepted as the baseline for
+planned 0.6.x refactoring. This is a documentation/design-only acceptance; the
+latest implemented simulation functionality remains version 0.5.2. The
+standalone collimation controls, H/V steering, beam roll, and projection
+behavior were manually verified. Full manual browser-to-plugin GUI validation
+remains outstanding.
+
+## Accepted 0.6.0 physical-model architecture design
+
+- The accepted design reference is
+  [virtRTG-0.6.0-architecture.md](design/virtRTG-0.6.0-architecture.md). It
+  defines a long-term direction for representing real X-ray imaging processes
+  at selectable physical and numerical approximation levels. It does not
+  claim that current VirtualRTG implements complete X-ray physics and does not
+  add simulation functionality.
+- Keep five responsibilities distinct without requiring five class
+  hierarchies: physical models represent processes; experimental configuration
+  selects conditions, restrictions and deliberate modifications; numerical
+  methods calculate the selected model; diagnostic/research outputs expose
+  intermediate or analytical results; presentation visualizes results.
+- `VirtualXRay` remains the scene-integrated acquisition coordinator and
+  settings/persistence boundary. `XRayTube` owns emission;
+  `XRayCollimator` owns beam restriction/transmission; material-response
+  models own scalar/material-to-attenuation mapping; `XRayTransportModel` owns
+  transport and integration strategies; `XRayDetector` owns detector geometry
+  and physical response; `DetectorImage` remains a separate presentation
+  scene object. These boundaries do not imply scene nodes or serialized model
+  instances.
+- Keep primary line-integral diagnostics distinct from incident radiation,
+  detector response, recorded signal and analytical outputs. Preserve legacy
+  `integral` and `intensity` arithmetic and meanings through compatibility
+  behavior; neither output implies calibrated detector counts. Per-source
+  attenuation maps remain diagnostics.
+- Preserve current research capabilities on the same acquisition/transport
+  path: ray/planar depth-window clipping of the integration domain; anatomical
+  source inclusion selection; per-object attenuation multipliers and
+  material-response overrides; per-source line-integral diagnostics;
+  independently processed mesh and volume sources with their supported
+  backends; motion-frame expansion semantics; global material curves/windows;
+  and repeated cached presentation through independent `DetectorImage`
+  objects. Depth clipping is not collimation, and
+  `motion_frame_mode="all"` is not time-weighted exposure.
+- The accepted migration sequence is 0.6.1 tube/collimator separation with
+  unchanged geometry, effective beam and device-link mapping; 0.6.2 transport
+  extraction preserving clipping, source selection, per-source diagnostics
+  and numerical backends; 0.6.3 detector separation preserving legacy output
+  modes and distinguishing analytical results from recorded signals; 0.6.4
+  capture/cache review preserving repeated presentation without transport
+  reruns; and 0.6.5 integration validation including depth-clipped and
+  per-source diagnostic regressions plus the accepted simulator/device-link
+  workflow.
+- Protocol v1, scene serialization, GUI behavior and projection geometry
+  conventions remain unchanged during design acceptance. No physical-model
+  classes or 0.6.1 implementation are included in 0.6.0.
 
 ## Accepted 0.4.0 architecture
 
