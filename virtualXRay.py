@@ -18,6 +18,7 @@ from .xray.xraySource import (
 	ensure_xray_source_config,
 	get_xray_material_response_config,
 )
+from .xray.xrayComponents import FocalSpotSamples, XRayCollimator, XRayTube
 
 from .xray.xrayProjection import (
 	RectangularBeamGeometry,
@@ -655,6 +656,10 @@ class VirtualXRay(Object):
 
 	def build_geometry(self):
 		"""Build the current projection geometry from intuitive detector pose parameters."""
+		return self._build_geometry(self.build_collimator_model())
+
+	def _build_geometry(self, collimator):
+		"""Adapt one collimator snapshot and current scene settings to projection geometry."""
 		self._ensure_depth_window_defaults()
 		is_cone = str(self.projection_mode).lower() == "cone"
 		depth_mode = str(self.depth_window_mode).strip().lower()
@@ -681,8 +686,24 @@ class VirtualXRay(Object):
 			depth_window_mm=self.depth_window_mm if geometry_depth_mode is not None else None,
 			depth_window_origin_ref=self.depth_window_origin_ref if geometry_depth_mode == "planar" else None,
 			depth_window_axis_ref=depth_axis_ref,
+			beam_geometry=collimator.beam_geometry,
+			collimation_enabled=collimator.enabled,
+		)
+
+	def build_tube_model(self):
+		"""Build a point-emission snapshot without inferring tube pose from beam pose."""
+		if str(self.projection_mode).lower() != "cone":
+			return None
+		return XRayTube(
+			focal_spot_samples=FocalSpotSamples.point(self.source_position_ref, "virtual_xray_ref_mm"),
+			energy_kev=getattr(self, "physics_source_energy_kev", None),
+		)
+
+	def build_collimator_model(self):
+		"""Build an immutable collimator snapshot from authoritative scene geometry."""
+		return XRayCollimator(
 			beam_geometry=getattr(self, "directional_beam_geometry", None),
-			collimation_enabled=bool(getattr(self, "physical_collimation_enabled", False)),
+			enabled=bool(getattr(self, "physical_collimation_enabled", False)),
 		)
 
 	@property
@@ -881,12 +902,16 @@ class VirtualXRay(Object):
 
 	def build_projection_config(self):
 		"""Return a complete projection configuration based on this scene object."""
+		collimator = self.build_collimator_model()
+		tube = self.build_tube_model()
 		return XRayProjectionConfig(
-			geometry=self.build_geometry(),
+			geometry=self._build_geometry(collimator),
 			physics_model=self.build_physics_model(),
 			presentation_model=None,
 			reference_transform=np.eye(4, dtype=np.float32),
 			quality_profile=self.quality_profile(),
+			tube_model=tube,
+			collimator_model=collimator,
 		)
 
 	def project_scene_annotations(self):

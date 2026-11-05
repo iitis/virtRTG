@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.1
+
+- Added transient `FocalSpotSamples`, `XRayTube`, and `XRayCollimator` configuration snapshots while keeping `VirtualXRay` as the geometry and serialization authority.
+- Adapted the ideal angular collimator snapshot to the existing projection geometry without changing ray generation, exposure-mask, or projection kernels.
+- Added regression coverage for snapshot consistency, point-source configuration, collimator-only roll, and parallel-mode compatibility.
+
 ## 0.6.0
 
 - Completed and accepted the physical-model architecture audit and staged

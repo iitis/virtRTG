@@ -1,11 +1,43 @@
 # virtRTG Baseline
 
-Status: version 0.6.0 architecture design is accepted as the baseline for
-planned 0.6.x refactoring. This is a documentation/design-only acceptance; the
-latest implemented simulation functionality remains version 0.5.2. The
-standalone collimation controls, H/V steering, beam roll, and projection
-behavior were manually verified. Full manual browser-to-plugin GUI validation
-remains outstanding.
+Status: the version 0.6.0 architecture design and the narrowly scoped 0.6.1
+tube/collimator configuration implementation are accepted. Version 0.6.1 adds
+configuration snapshots while preserving the existing projection kernels,
+scene serialization, GUI, and simulator protocol. Full manual
+browser-to-plugin GUI validation remains outstanding.
+
+## Accepted 0.6.1 tube and collimator configuration
+
+- `VirtualXRay` remains the authority for editable and serialized settings.
+  `build_projection_config()` creates one `XRayTube` snapshot and one
+  `XRayCollimator` snapshot. The exact collimator snapshot is adapted into
+  `XRayProjectionGeometry` and retained on `XRayProjectionConfig`; public
+  `build_geometry()` creates and passes a fresh snapshot.
+- `FocalSpotSamples` validates finite `(N,3)` positions in millimeters,
+  finite normalized nonnegative `(N,)` weights, and an explicit coordinate
+  frame. The current `XRayTube` snapshot contains the existing single point
+  source and scalar energy context. It is informational: projection ray
+  generation does not consume the tube model.
+- Independent mechanical tube orientation is not represented. The effective
+  `directional_beam_geometry` belongs to the collimation/projection field and
+  changes under H/V/Roll. No tube orientation is inferred from that field;
+  `XRayTube.tube_to_reference_rotation` remains unset.
+- `XRayCollimator` represents the existing ideal angular rectangular field,
+  not a positioned aperture. Its optional direction-based batch helper assumes
+  rays from a shared focal point and is not used in the projection hot path.
+  The projector retains the existing vectorized point-source exposure mask.
+- No N>1 transport, physical blades, spectra, scatter, penumbra, detector
+  response, or transport extraction was implemented. Parallel mode continues
+  through its existing compatibility path with no tube snapshot.
+- Verification: the plugin suite passed **117 tests**, with **5 skipped** and
+  **10 subtests passed**. Focused geometry, projection/collimation, physics,
+  scene-format, device-link and presentation coverage passed (**102 passed,
+  10 subtests**). Compile and `git diff --check` passed.
+- Post-change 512x512 benchmark medians were 21.8 us for `build_geometry()`,
+  60.4 us for `build_projection_config()`, and 22.85 ms for vector ray setup
+  plus the rectangular mask. The mask occupies 262,144 bytes; the retained
+  array proxy is about 18.1 MB. No pre-refactoring performance measurement was
+  captured, so no before/after comparison is available.
 
 ## Accepted 0.6.0 physical-model architecture design
 

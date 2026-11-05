@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 import logging
 import os
 from time import perf_counter
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING, Iterable, Sequence
 
 import cv2
 import numpy as np
@@ -23,6 +23,9 @@ from .xrayPresentation import XRayPresentationModel
 from .xrayHelpers import _normalize_vector, _transform_point, _transform_direction
 
 _log = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+	from .xrayComponents import XRayCollimator, XRayTube
 
 
 def _ray_box_intersections_vectorized(ray_origins, ray_directions, box_min, box_max):
@@ -680,6 +683,8 @@ class XRayProjectionConfig:
 	presentation_model: XRayPresentationModel | None = None
 	reference_transform: np.ndarray = field(default_factory=_identity_matrix)
 	quality_profile: XRayProjectionQualityProfile | None = None
+	tube_model: XRayTube | None = None
+	collimator_model: XRayCollimator | None = None
 
 	def effective_geometry(self):
 		"""Return the geometry after applying any quality profile override."""
