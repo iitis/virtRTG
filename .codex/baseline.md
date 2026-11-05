@@ -1,10 +1,38 @@
 # virtRTG Baseline
 
-Status: the 0.6.0 architecture design and the 0.6.1 tube/collimator snapshots
-and 0.6.2 minimal transport extraction are accepted. Version 0.6.2 separates
-attenuation integration from projection ray preparation while preserving the
-existing numerical kernels, scene serialization, GUI, and simulator protocol.
-Full manual browser-to-plugin GUI validation remains outstanding.
+Status: the 0.6.0 architecture design, 0.6.1 tube/collimator snapshots, 0.6.2
+transport extraction, and 0.6.3 ideal detector boundary are accepted. These
+stages preserve existing numerical kernels, scene serialization, GUI, and
+simulator protocol. Full manual browser-to-plugin GUI validation remains
+outstanding.
+
+## Accepted 0.6.3 ideal detector response
+
+- `XRayProjector` constructs an `XRayDetector` by default and accepts a detector
+  response component through its constructor. The detector is a lightweight
+  computational component, not a scene node.
+- After the existing `XRayPhysicsModel.integral_to_image()` conversion, only
+  total intensity-mode output passes through `XRayDetector.record()`. The
+  current ideal response returns the incident array unchanged, preserving
+  values, shape, dtype, and object identity without an array copy.
+- Integral mode remains an analytical line-integral output and bypasses the
+  detector. Per-source conversions remain diagnostics and also bypass it.
+  Capture fields, cache behavior, and `DetectorImage` presentation are
+  unchanged.
+- Existing projection geometry remains authoritative for detector pose and
+  pixel layout. `XRayDetector` is geometry-independent; no second mutable
+  geometry, scene node, GUI control, or serialization field was introduced.
+- The current intensity is an idealized compatibility signal derived from the
+  existing attenuation conversion. It is not calibrated photon fluence or a
+  detector-count measurement. `XRayPhysicsModel.integral_to_image()` and its
+  legacy behavior remain unchanged.
+- Future nonideal response models require a more explicit incident-signal
+  contract before adding physical detector behavior. Noise, blur/PSF/MTF,
+  gain, nonlinear response, saturation, and quantization are not implemented.
+- Verification: the plugin suite passed **120 tests**, with **5 existing
+  skips** and **10 subtests passed**. All **79** frozen original and
+  supplementary reference arrays matched exactly; their files and hashes
+  were preserved. `git diff --check` passed.
 
 ## Accepted 0.6.2 transport integration
 
@@ -30,8 +58,8 @@ Full manual browser-to-plugin GUI validation remains outstanding.
 - Observed sampling timing reductions were not causally established. A
   standalone sampled-path transport unit test remains optional future coverage.
 - N>1 focal spots, spectra, scatter, physical collimator blades, and detector
-  response separation remain unimplemented. Detector-response extraction is a
-  later stage and is not part of 0.6.2.
+  response remain unimplemented at 0.6.2. Detector-response separation was
+  introduced later in 0.6.3 as an ideal identity component only.
 
 ## Accepted 0.6.1 tube and collimator configuration
 
@@ -101,14 +129,15 @@ Full manual browser-to-plugin GUI validation remains outstanding.
   and repeated cached presentation through independent `DetectorImage`
   objects. Depth clipping is not collimation, and
   `motion_frame_mode="all"` is not time-weighted exposure.
-- The accepted migration sequence through 0.6.2 is complete: 0.6.1 introduced
+- The accepted migration sequence through 0.6.3 is complete: 0.6.1 introduced
   tube/collimator configuration snapshots with unchanged geometry and
   device-link mapping; 0.6.2 extracted prepared-ray attenuation integration
   while preserving clipping, source selection, per-source diagnostics, and
-  numerical backends. Future stages remain 0.6.3 detector separation with
-  legacy output compatibility; 0.6.4 capture/cache review; and 0.6.5
-  integration validation including depth-clipped and per-source diagnostic
-  regressions plus the accepted simulator/device-link workflow.
+  numerical backends; 0.6.3 added the ideal detector response while preserving
+  legacy signal conversion and analytical diagnostics. Future stages remain
+  0.6.4 capture/cache review and 0.6.5 integration validation including
+  depth-clipped and per-source diagnostic regressions plus the accepted
+  simulator/device-link workflow.
 - Protocol v1, scene serialization, GUI behavior and projection geometry
   conventions remain unchanged during design acceptance. No physical-model
   classes or 0.6.1 implementation are included in 0.6.0.
@@ -160,7 +189,9 @@ Full manual browser-to-plugin GUI validation remains outstanding.
 - The browser does not stream pose updates during gizmo dragging; it sends the pose when the drag ends.
 - Physical collimation is an ideal hard-edged primary-radiation model. Scatter, dark current, electronic noise, focal-spot penumbra, heel effect, and spectral emission are not modeled. Parallel-beam collimation is unsupported.
 - Full manual browser-to-plugin GUI validation remains outstanding; automated Qt integration tests cover device updates, rollback, and the no-automatic-projection behavior.
-- `XRayPhysicsModel` modularization into separate tube, collimator, and detector classes is deferred; `XRayTube`, `XRayCollimator`, and `XRayDetector` are not part of version 0.5.2.
+- Nonideal detector-response modeling is not implemented. The current ideal
+  identity component does not receive calibrated physical incident fluence;
+  future response models need a more explicit signal contract.
 - Device parameters and geometry synchronization are not bidirectional.
 - Full browser interaction and workspace-selection behavior still require manual verification.
 

@@ -19,6 +19,7 @@ from scipy.ndimage import map_coordinates
 from dpVision import Mesh, Volumetric
 from .xraySource import XRaySampleSource, VolumetricXRaySource
 from .xrayTransport import XRayTransportModel
+from .xrayDetector import XRayDetector
 
 from .xrayPresentation import XRayPresentationModel
 from .xrayHelpers import _normalize_vector, _transform_point, _transform_direction
@@ -613,7 +614,8 @@ class XRayPhysicsModel:
 
 		`output_mode == "intensity"` applies a Beer-Lambert style
 		`I = exp(-integral)` conversion, optionally followed by a cone-beam
-		distance gain term.
+		distance gain term. This is a simplified compatibility signal, not a
+		calibrated photon-fluence or detector-count measurement.
 		"""
 		line_integral = np.asarray(line_integral, dtype=np.float32)
 		distance_gain = self.source_distance_gain(
@@ -883,12 +885,13 @@ class XRayScene:
 class XRayProjector:
 	"""Project one or more world-space attenuation sources onto a detector plane."""
 
-	def __init__(self, sample_sources: Iterable[XRaySampleSource]):
-		"""Store the list of sample sources used during projection."""
+	def __init__(self, sample_sources: Iterable[XRaySampleSource], detector=None):
+		"""Store projection sources and the detector response component."""
 		self.sample_sources = list(sample_sources)
 		if not self.sample_sources:
 			raise ValueError("sample_sources must contain at least one X-ray source.")
 		self.transport_model = XRayTransportModel(self.sample_sources)
+		self.detector = XRayDetector() if detector is None else detector
 
 	def scene_bounds_world(self):
 		"""Return the world-space AABB covering every source registered in the projector."""
@@ -1075,6 +1078,8 @@ class XRayProjector:
 			projection_mode="cone" if geometry.is_cone_beam() else "parallel",
 			exposure_mask=exposure_mask.reshape(-1),
 		).reshape(height, width)
+		if str(physics_model.output_mode).lower() == "intensity":
+			projection = self.detector.record(projection)
 		_phase_timings["physics_conversion"] = float(perf_counter() - _t_physics_start)
 		line_integral_image = projection_flat.reshape(height, width).astype(np.float32, copy=True)
 		source_projections = []

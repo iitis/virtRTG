@@ -18,8 +18,10 @@ from plugins.virtRTG.xray.xrayProjection import (
 	XRayProjectionGeometry,
 	XRayProjectionQualityProfile,
 	RectangularBeamGeometry,
+	XRayProjector,
 	XRayScene,
 )
+from plugins.virtRTG.xray.xrayDetector import XRayDetector
 from plugins.virtRTG.xray.xrayAnnotationOverlay import (
 	XRayOverlayCross,
 	XRayOverlayProjectionSet,
@@ -79,6 +81,49 @@ class _ConstantBoxSource:
 	def resolve_physics_model(self, physics_model):
 		"""Keep the shared physics model unchanged for this simple helper source."""
 		return physics_model
+
+
+def test_ideal_detector_preserves_array_shape_dtype_and_identity():
+	"""The ideal detector returns the incident array itself without a copy."""
+	incident = np.arange(6, dtype=np.float64).reshape(2, 3)
+	recorded = XRayDetector().record(incident)
+	assert recorded is incident
+	assert recorded.shape == incident.shape
+	assert recorded.dtype == incident.dtype
+
+
+class _RecordingDetector:
+	"""Record calls to verify the projector's signal-mode boundary."""
+
+	def __init__(self):
+		self.signals = []
+
+	def record(self, incident_signal):
+		self.signals.append(incident_signal)
+		return incident_signal
+
+
+def test_projector_records_total_intensity_but_not_integral_diagnostics():
+	"""Apply detector response only to the total intensity conversion."""
+	geometry = XRayProjectionGeometry(
+		detector_origin_ref=[0.0, 0.0, -1.0],
+		detector_u_ref=[1.0, 0.0, 0.0],
+		detector_v_ref=[0.0, 1.0, 0.0],
+		detector_shape_hw=[1, 1],
+		ray_direction_ref=[0.0, 0.0, 1.0],
+		step_mm=1.0,
+	)
+	detector = _RecordingDetector()
+	projector = XRayProjector([_ConstantBoxSource()], detector=detector)
+	intensity_capture = projector.project(geometry, XRayPhysicsModel(output_mode="intensity"))
+	assert len(detector.signals) == 1
+	assert detector.signals[0] is intensity_capture.detector_image
+	assert len(intensity_capture.source_projections) == 1
+	assert detector.signals[0].shape == (1, 1)
+	assert detector.signals[0].dtype == np.float32
+
+	projector.project(geometry, XRayPhysicsModel(output_mode="integral"))
+	assert len(detector.signals) == 1
 
 
 class _ScalarDrivenBoxSource:

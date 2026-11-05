@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.3
+
+- Added an ideal `XRayDetector` response component for total intensity-mode
+  output, preserving the existing signal array without copying.
+- Kept integral outputs and per-source diagnostics outside detector response;
+  projection geometry, legacy physics conversion, capture behavior, GUI, and
+  serialization remain unchanged.
+- Verified exact equivalence across all 79 frozen original and supplementary
+  reference arrays; no reference data was regenerated.
+
 ## 0.6.2
 
 - Extracted prepared-ray primary attenuation integration into `XRayTransportModel`, preserving the existing sampling, Siddon, and mesh integration backends and legacy projection outputs.
