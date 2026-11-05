@@ -20,6 +20,7 @@ from .xray.xraySource import (
 )
 
 from .xray.xrayProjection import (
+	RectangularBeamGeometry,
 	XRayPhysicsModel,
 	XRayProjectionConfig,
 	XRayProjectionGeometry,
@@ -35,6 +36,71 @@ from .xray.xrayAnnotationOverlay import (
 	overlay_projection_set_from_payload,
 	overlay_projection_set_to_payload,
 )
+
+
+def _rotate_beam_vector(vector, axis, angle_radians):
+	"""Rotate one vector with Rodrigues' formula around a normalized axis."""
+	axis = np.asarray(axis, dtype=np.float64)
+	axis_norm = float(np.linalg.norm(axis))
+	if axis_norm <= 1e-9 or not np.isfinite(axis_norm):
+		raise ValueError("Beam rotation axis must have non-zero finite length.")
+	axis = axis / axis_norm
+	vector = np.asarray(vector, dtype=np.float64)
+	cosine = float(np.cos(angle_radians))
+	sine = float(np.sin(angle_radians))
+	return (vector * cosine + np.cross(axis, vector) * sine
+			+ axis * float(np.dot(axis, vector)) * (1.0 - cosine))
+
+
+def _beam_with_offsets(reference_beam, horizontal_degrees, vertical_degrees, roll_degrees=0.0):
+	"""Return a beam rotated from one stable reference frame.
+
+	Horizontal steering is around reference vertical toward reference horizontal.
+	Vertical steering follows around the steered frame's negative horizontal axis.
+	Roll follows around the resulting forward axis using the right-hand rule.
+	"""
+	horizontal_angle = float(np.deg2rad(horizontal_degrees))
+	vertical_angle = float(np.deg2rad(vertical_degrees))
+	roll_angle = float(np.deg2rad(roll_degrees))
+	first_axis = np.asarray(reference_beam.beam_vertical_ref, dtype=np.float64)
+	first_frame = [
+		_rotate_beam_vector(value, first_axis, horizontal_angle)
+		for value in (
+			reference_beam.beam_axis_ref,
+			reference_beam.beam_horizontal_ref,
+			reference_beam.beam_vertical_ref,
+		)
+	]
+	axis, horizontal, vertical = first_frame
+	second_axis = -horizontal
+	axis, horizontal, vertical = [
+		_rotate_beam_vector(value, second_axis, vertical_angle)
+		for value in (axis, horizontal, vertical)
+	]
+	axis, horizontal, vertical = [
+		_rotate_beam_vector(value, axis, roll_angle)
+		for value in (axis, horizontal, vertical)
+	]
+	return RectangularBeamGeometry(
+		beam_axis_ref=axis,
+		beam_horizontal_ref=horizontal,
+		beam_vertical_ref=vertical,
+		field_width_cm=reference_beam.field_width_cm,
+		field_height_cm=reference_beam.field_height_cm,
+		field_reference_distance_mm=reference_beam.field_reference_distance_mm,
+	)
+
+
+def _beam_with_dimensions(beam, field_width_cm, field_height_cm, field_reference_distance_mm):
+	"""Return a beam with updated dimensions and its existing orientation."""
+	return RectangularBeamGeometry(
+		beam_axis_ref=beam.beam_axis_ref,
+		beam_horizontal_ref=beam.beam_horizontal_ref,
+		beam_vertical_ref=beam.beam_vertical_ref,
+		field_width_cm=field_width_cm,
+		field_height_cm=field_height_cm,
+		field_reference_distance_mm=field_reference_distance_mm,
+	)
 
 
 class VirtualXRay(Object):
@@ -211,6 +277,8 @@ class VirtualXRay(Object):
 		self.ray_direction_ref = np.array([0.0, 0.0, 1.0], dtype=np.float32)
 		self.projection_mode = "cone"
 		self.directional_beam_geometry = None
+		self._collimation_reference_geometry = None
+		self._collimation_angles_degrees = (0.0, 0.0, 0.0)
 		self.physical_collimation_enabled = False
 		self.motion_frame_mode = "active"
 		self.step_mm = 1.0
@@ -616,6 +684,53 @@ class VirtualXRay(Object):
 			beam_geometry=getattr(self, "directional_beam_geometry", None),
 			collimation_enabled=bool(getattr(self, "physical_collimation_enabled", False)),
 		)
+
+	@property
+	def collimation_reference_geometry(self):
+		"""Return the session-only reference frame for relative field editing."""
+		return self._collimation_reference_geometry
+
+	@property
+	def collimation_angles_degrees(self):
+		"""Return horizontal, vertical and roll adjustments relative to the reference."""
+		return self._collimation_angles_degrees
+
+	def reset_collimation_reference(self, reference_geometry):
+		"""Set a new collimation reference and reset session-relative angles.
+
+		Use this transition for explicit detector alignment, accepted device geometry,
+		and scene loading. The effective beam remains the serialized/projection value;
+		this reference is session-only editing state.
+		"""
+		if reference_geometry is not None and not isinstance(reference_geometry, RectangularBeamGeometry):
+			raise TypeError("reference_geometry must be a RectangularBeamGeometry or None.")
+		self._collimation_reference_geometry = reference_geometry
+		self._collimation_angles_degrees = (0.0, 0.0, 0.0)
+		self.directional_beam_geometry = reference_geometry
+
+	def set_collimation_angles(self, horizontal_degrees, vertical_degrees, roll_degrees):
+		"""Recompute effective beam geometry from the stored reference orientation."""
+		reference = self._collimation_reference_geometry
+		if reference is None:
+			raise ValueError("Align the beam before adjusting its angles.")
+		angles = tuple(float(value) for value in (horizontal_degrees, vertical_degrees, roll_degrees))
+		geometry = _beam_with_offsets(reference, *angles)
+		self._collimation_angles_degrees = angles
+		self.directional_beam_geometry = geometry
+		return geometry
+
+	def set_collimation_dimensions(self, field_width_cm, field_height_cm, field_reference_distance_mm):
+		"""Update reference/effective field dimensions without rebasing its angles."""
+		reference = self._collimation_reference_geometry
+		if reference is None:
+			raise ValueError("Align the beam before editing its field dimensions.")
+		updated_reference = _beam_with_dimensions(
+			reference, field_width_cm, field_height_cm, field_reference_distance_mm,
+		)
+		geometry = _beam_with_offsets(updated_reference, *self._collimation_angles_degrees)
+		self._collimation_reference_geometry = updated_reference
+		self.directional_beam_geometry = geometry
+		return geometry
 
 	def build_scalar_preprocessor(self):
 		"""Build the optional source scalar preprocessor used before attenuation mapping."""

@@ -205,6 +205,11 @@ class FakeVirtualXRay:
 	def build_geometry(self):
 		self.builds += 1
 
+	def reset_collimation_reference(self, reference_geometry):
+		self.directional_beam_geometry = reference_geometry
+		self.collimation_reference_geometry = reference_geometry
+		self.collimation_angles_degrees = (0.0, 0.0, 0.0)
+
 
 class FakePlugin:
 	def __init__(self, selected):
@@ -330,9 +335,16 @@ def test_failed_geometry_rebuild_restores_inputs_and_build_backfills(qapp, monke
 def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp, monkeypatch):
 	from plugins.virtRTG.device_link.device_adapter import DeviceState
 	from plugins.virtRTG.virtualXRay import VirtualXRay
-	from plugins.virtRTG.xray.xrayProjection import XRayProjectionGeometry
+	from plugins.virtRTG.xray.xrayProjection import (
+		RectangularBeamGeometry,
+		XRayProjectionGeometry,
+	)
 
 	virtual_xray = VirtualXRay()
+	virtual_xray.reset_collimation_reference(
+		RectangularBeamGeometry((0, 0, 1), (1, 0, 0), (0, 1, 0), 15.0, 10.0, 1000.0)
+	)
+	virtual_xray.set_collimation_angles(12.0, -6.0, 28.0)
 	plugin = FakePlugin(virtual_xray)
 	bridge = DeviceLinkIntegration(plugin)
 	projection_calls = []
@@ -346,13 +358,18 @@ def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp
 	assert initial_beam.beam_axis_ref == (0.0, -1.0, 0.0)
 	assert initial_beam.field_width_cm == state.collimator.width_cm
 	assert initial_beam.field_height_cm == state.collimator.height_cm
+	assert virtual_xray.collimation_reference_geometry == initial_beam
+	assert virtual_xray.collimation_angles_degrees == (0.0, 0.0, 0.0)
 	initial_detector = tuple(getattr(virtual_xray, name).copy() for name in (
 		"detector_center_ref", "detector_normal_ref", "detector_up_ref"))
 
+	virtual_xray.set_collimation_angles(14.0, -8.0, 23.0)
 	state.poses["tube"].rotation_rad = (0.0, 0.0, math.pi / 2.0)
 	bridge.signals.geometry_received.emit(state.to_dict())
 	assert wait_qt(qapp, lambda: len(plugin.refreshes) == 2)
 	rotated_beam = virtual_xray.directional_beam_geometry
+	assert virtual_xray.collimation_reference_geometry == rotated_beam
+	assert virtual_xray.collimation_angles_degrees == (0.0, 0.0, 0.0)
 	assert rotated_beam.beam_axis_ref[0] == pytest.approx(1.0)
 	assert rotated_beam.beam_axis_ref[1] == pytest.approx(0.0, abs=1e-7)
 	for name, expected in zip(("detector_center_ref", "detector_normal_ref", "detector_up_ref"), initial_detector):
@@ -363,6 +380,8 @@ def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp
 	attrs = ("source_position_ref", "detector_center_ref", "detector_normal_ref", "detector_up_ref")
 	before_failure = {name: getattr(virtual_xray, name).copy() for name in attrs}
 	beam_before_failure = virtual_xray.directional_beam_geometry
+	angles_before_failure = virtual_xray.collimation_angles_degrees
+	reference_before_failure = virtual_xray.collimation_reference_geometry
 	refresh_count = len(plugin.refreshes)
 	monkeypatch.setattr(XRayProjectionGeometry, "from_detector_pose",
 		lambda **_kwargs: (_ for _ in ()).throw(ValueError("rebuild failed")))
@@ -372,6 +391,8 @@ def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp
 	for name, expected in before_failure.items():
 		assert np_allclose(getattr(virtual_xray, name), expected)
 	assert virtual_xray.directional_beam_geometry is beam_before_failure
+	assert virtual_xray.collimation_reference_geometry is reference_before_failure
+	assert virtual_xray.collimation_angles_degrees == angles_before_failure
 	assert len(plugin.refreshes) == refresh_count
 	assert virtual_xray.last_raw_projection is None
 	assert not projection_calls

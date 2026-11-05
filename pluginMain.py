@@ -352,7 +352,8 @@ class VirtualRTG(PluginInterface):
 		return matches[0] if len(selected) == 1 and len(matches) == 1 else None
 
 	def refresh_virtual_xray(self, virtual_xray):
-		"""Refresh scene views after GUI-thread geometry fields have been updated."""
+		"""Refresh views and the selected geometry panel after a device geometry update."""
+		AP.updateProperties()
 		AP.updateAllViews()
 
 

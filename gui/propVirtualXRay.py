@@ -45,9 +45,53 @@ from .detectorImageViewer import DetectorImageViewerChild
 from .flowPanel import FlowGroupBox as _FlowGroupBox
 from .flowPanel import FlowPanelMixin
 from .transferCurveDialog import TransferCurveDialog
-from ..xray.xrayProjection import XRayPhysicsModel
+from ..xray.xrayProjection import RectangularBeamGeometry, XRayPhysicsModel
 from ..xray.xraySource import get_xray_material_response_config, set_xray_material_response_config
 from ..xray.xraySource import ensure_xray_source_config
+
+
+def _finite_vector(value, label):
+	"""Return one finite three-vector or raise a useful geometry error."""
+	vector = np.asarray(value, dtype=np.float64)
+	if vector.shape != (3,) or not np.all(np.isfinite(vector)):
+		raise ValueError(f"{label} must be a finite three-vector.")
+	return vector
+
+
+def _unit_vector(value, label):
+	"""Return one normalized finite three-vector or raise a useful geometry error."""
+	vector = _finite_vector(value, label)
+	norm = float(np.linalg.norm(vector))
+	if norm <= 1e-9:
+		raise ValueError(f"{label} must have non-zero length.")
+	return vector / norm
+
+
+def _build_beam_aligned_to_detector(virtual_xray, field_width_cm=15.0, field_height_cm=10.0,
+									   field_reference_distance_mm=1000.0):
+	"""Build a beam frame aimed at the detector center and oriented by its up axis.
+
+	The detector up vector is projected into the beam-normal plane. Horizontal is
+	then derived so ``horizontal x vertical = beam axis``. This preserves the
+	VirtualXRay pixel handedness when the detector faces the source.
+	"""
+	geometry = virtual_xray.build_geometry()
+	source = _finite_vector(virtual_xray.source_position_ref, "Source position")
+	detector_center = np.asarray(geometry.detector_center_ref_point(), dtype=np.float64)
+	axis = _unit_vector(detector_center - source, "Source-to-detector direction")
+	vertical = np.asarray(geometry.detector_v_ref, dtype=np.float64)
+	vertical -= axis * float(np.dot(vertical, axis))
+	vertical = _unit_vector(vertical, "Detector up projected perpendicular to beam")
+	horizontal = _unit_vector(np.cross(vertical, axis), "Aligned beam horizontal")
+	return RectangularBeamGeometry(
+		beam_axis_ref=axis,
+		beam_horizontal_ref=horizontal,
+		beam_vertical_ref=vertical,
+		field_width_cm=field_width_cm,
+		field_height_cm=field_height_cm,
+		field_reference_distance_mm=field_reference_distance_mm,
+	)
+
 
 class PropVirtualXRay(FlowPanelMixin, PropWidget):
 	"""Edit basic source and detector parameters of one `VirtualXRay` scene node."""
@@ -91,9 +135,51 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		self._add_flow_control(scene_layout, "Preset", self.geometryPresetWidget)
 		self._add_flow_control(scene_layout, "Mode", self.modeCombo)
 		self.collimationCheck = QCheckBox("Enable physical rectangular collimation")
-		self.collimationCheck.setToolTip("Uses the directional beam geometry received from the device link. Cone-beam only.")
-		self._add_flow_control(scene_layout, "Beam", self.collimationCheck)
+		self.collimationCheck.setToolTip("Enable the current directional rectangular beam for cone-beam projection.")
 		geomLayout.addWidget(sceneGroup)
+
+		collimationGroup, collimation_layout = self._create_collapsible_flow_group("Collimation", collapsed=True)
+		self.collimationStatusLabel = QLabel("Beam geometry is not initialized.")
+		self._set_compact_field(self.collimationStatusLabel)
+		self._add_flow_control(collimation_layout, "Status", self.collimationStatusLabel)
+		self._add_flow_control(collimation_layout, "Mode", self.collimationCheck)
+
+		self.beamFieldWidthSpin = QDoubleSpinBox()
+		self.beamFieldHeightSpin = QDoubleSpinBox()
+		self.beamReferenceDistanceSpin = QDoubleSpinBox()
+		for spin, limits, step in (
+			(self.beamFieldWidthSpin, (0.1, 200.0), 0.5),
+			(self.beamFieldHeightSpin, (0.1, 200.0), 0.5),
+			(self.beamReferenceDistanceSpin, (1.0, 10000.0), 10.0),
+		):
+			spin.setRange(*limits)
+			spin.setDecimals(1)
+			spin.setSingleStep(step)
+			self._set_compact_field(spin)
+		self._add_flow_control(collimation_layout, "Field width [cm]", self.beamFieldWidthSpin)
+		self._add_flow_control(collimation_layout, "Field height [cm]", self.beamFieldHeightSpin)
+		self._add_flow_control(collimation_layout, "Reference distance [mm]", self.beamReferenceDistanceSpin)
+
+		self.beamHorizontalOffsetSpin = QDoubleSpinBox()
+		self.beamVerticalOffsetSpin = QDoubleSpinBox()
+		for spin in (self.beamHorizontalOffsetSpin, self.beamVerticalOffsetSpin):
+			spin.setRange(-45.0, 45.0)
+			spin.setDecimals(1)
+			spin.setSingleStep(0.5)
+			self._set_compact_field(spin)
+		self._add_flow_control(collimation_layout, "Horizontal adjustment [deg]", self.beamHorizontalOffsetSpin)
+		self._add_flow_control(collimation_layout, "Vertical adjustment [deg]", self.beamVerticalOffsetSpin)
+		self.beamRollSpin = QDoubleSpinBox()
+		self.beamRollSpin.setRange(-180.0, 180.0)
+		self.beamRollSpin.setDecimals(1)
+		self.beamRollSpin.setSingleStep(1.0)
+		self.beamRollSpin.setValue(0.0)
+		self._set_compact_field(self.beamRollSpin)
+		self._add_flow_control(collimation_layout, "Beam roll [deg]", self.beamRollSpin)
+		self.beamAlignDetectorButton = QPushButton("Align beam to detector")
+		self.beamAlignDetectorButton.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+		self._add_flow_control(collimation_layout, "", self.beamAlignDetectorButton)
+		geomLayout.addWidget(collimationGroup)
 
 		detectorGroup, detector_layout = self._create_collapsible_flow_group("Detector", collapsed=True)
 		self.detectorCenterSpin = MultiSpinBox(3, labels=("X", "Y", "Z"))
@@ -974,6 +1060,13 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		self.applyGeometryPresetButton.clicked.connect(self.on_apply_geometry_preset)
 		self.modeCombo.currentTextChanged.connect(self.on_mode_changed)
 		self.collimationCheck.toggled.connect(self.on_collimation_toggled)
+		self.beamFieldWidthSpin.valueChanged.connect(self.on_collimation_field_changed)
+		self.beamFieldHeightSpin.valueChanged.connect(self.on_collimation_field_changed)
+		self.beamReferenceDistanceSpin.valueChanged.connect(self.on_collimation_field_changed)
+		self.beamHorizontalOffsetSpin.valueChanged.connect(self.on_collimation_offset_changed)
+		self.beamVerticalOffsetSpin.valueChanged.connect(self.on_collimation_offset_changed)
+		self.beamRollSpin.valueChanged.connect(self.on_collimation_offset_changed)
+		self.beamAlignDetectorButton.clicked.connect(self.on_align_beam_to_detector)
 		self.detectorCenterSpin.valueChanged.connect(self.on_detector_center_changed)
 		self.detectorNormalSpin.valueChanged.connect(self.on_detector_normal_changed)
 		self.detectorUpSpin.valueChanged.connect(self.on_detector_up_changed)
@@ -1039,6 +1132,13 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		"""Block or unblock signals for all editable widgets in this panel."""
 		for widget in (
 			self.modeCombo,
+			self.collimationCheck,
+			self.beamFieldWidthSpin,
+			self.beamFieldHeightSpin,
+			self.beamReferenceDistanceSpin,
+			self.beamHorizontalOffsetSpin,
+			self.beamVerticalOffsetSpin,
+			self.beamRollSpin,
 			self.geometryPresetCombo,
 			self.detectorCenterSpin,
 			self.detectorNormalSpin,
@@ -1136,6 +1236,7 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		self.blockAll(True)
 		self.modeCombo.setCurrentText(str(obj.projection_mode))
 		self.collimationCheck.setChecked(bool(getattr(obj, "physical_collimation_enabled", False)))
+		self._sync_collimation_controls(obj)
 		self.detectorCenterSpin.setValue(obj.detector_center_ref)
 		self.detectorNormalSpin.setValue(obj.detector_normal_ref)
 		self.detectorUpSpin.setValue(obj.detector_up_ref)
@@ -1221,6 +1322,80 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
 		if obj is None:
 			return
 		obj.physical_collimation_enabled = bool(enabled)
+		self._after_change(obj)
+
+	def _sync_collimation_controls(self, obj):
+		"""Reflect model-owned collimation geometry and session-relative angles."""
+		beam = getattr(obj, "directional_beam_geometry", None)
+		angles = obj.collimation_angles_degrees
+
+		available = beam is not None
+		self.collimationStatusLabel.setText(
+			"Beam geometry is ready; angle adjustments are relative to this frame."
+			if available else "No beam geometry. Align to detector to initialize."
+		)
+		self.collimationCheck.setEnabled(available)
+		for spin in (
+			self.beamFieldWidthSpin,
+			self.beamFieldHeightSpin,
+			self.beamReferenceDistanceSpin,
+			self.beamHorizontalOffsetSpin,
+			self.beamVerticalOffsetSpin,
+			self.beamRollSpin,
+		):
+			spin.setEnabled(available)
+		if available:
+			self.beamFieldWidthSpin.setValue(float(beam.field_width_cm))
+			self.beamFieldHeightSpin.setValue(float(beam.field_height_cm))
+			self.beamReferenceDistanceSpin.setValue(float(beam.field_reference_distance_mm))
+		else:
+			self.beamFieldWidthSpin.setValue(15.0)
+			self.beamFieldHeightSpin.setValue(10.0)
+			self.beamReferenceDistanceSpin.setValue(1000.0)
+		self.beamHorizontalOffsetSpin.setValue(float(angles[0]))
+		self.beamVerticalOffsetSpin.setValue(float(angles[1]))
+		self.beamRollSpin.setValue(float(angles[2]))
+
+	def on_collimation_field_changed(self, _value=None):
+		"""Change field dimensions while retaining orientation and current adjustments."""
+		obj = self.obj_ref()
+		if obj is None or obj.collimation_reference_geometry is None:
+			return
+		obj.set_collimation_dimensions(
+			self.beamFieldWidthSpin.value(),
+			self.beamFieldHeightSpin.value(),
+			self.beamReferenceDistanceSpin.value(),
+		)
+		self._after_change(obj)
+
+	def on_collimation_offset_changed(self, _value=None):
+		"""Apply all three angle adjustments from the model's stable reference."""
+		obj = self.obj_ref()
+		if obj is None or obj.collimation_reference_geometry is None:
+			return
+		obj.set_collimation_angles(
+			self.beamHorizontalOffsetSpin.value(),
+			self.beamVerticalOffsetSpin.value(),
+			self.beamRollSpin.value(),
+		)
+		self._after_change(obj)
+
+	def on_align_beam_to_detector(self):
+		"""Initialize the beam toward the detector without changing activation mode."""
+		obj = self.obj_ref()
+		if obj is None:
+			return
+		try:
+			beam = _build_beam_aligned_to_detector(
+				obj,
+				field_width_cm=self.beamFieldWidthSpin.value(),
+				field_height_cm=self.beamFieldHeightSpin.value(),
+				field_reference_distance_mm=self.beamReferenceDistanceSpin.value(),
+			)
+		except (TypeError, ValueError) as exc:
+			self.collimationStatusLabel.setText(f"Unable to align beam: {exc}")
+			return
+		obj.reset_collimation_reference(beam)
 		self._after_change(obj)
 
 	@pyqtSlot()

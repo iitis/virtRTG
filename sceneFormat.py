@@ -606,9 +606,8 @@ def _apply_virtual_xray_payload(virtual_xray, payload):
 	virtual_xray.projection_mode = str(geometry.get("projection_mode", virtual_xray.projection_mode))
 	virtual_xray.physical_collimation_enabled = bool(geometry.get("physical_collimation_enabled", False))
 	beam_payload = geometry.get("directional_beam_geometry")
-	virtual_xray.directional_beam_geometry = (
-		None if beam_payload is None else RectangularBeamGeometry(**dict(beam_payload))
-	)
+	beam_geometry = None if beam_payload is None else RectangularBeamGeometry(**dict(beam_payload))
+	virtual_xray.reset_collimation_reference(beam_geometry)
 	virtual_xray.detector_center_ref = np.asarray(geometry.get("detector_center_ref", virtual_xray.detector_center_ref), dtype=np.float32)
 	virtual_xray.detector_normal_ref = np.asarray(geometry.get("detector_normal_ref", virtual_xray.detector_normal_ref), dtype=np.float32)
 	virtual_xray.detector_up_ref = np.asarray(geometry.get("detector_up_ref", virtual_xray.detector_up_ref), dtype=np.float32)

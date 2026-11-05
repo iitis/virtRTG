@@ -1,0 +1,784 @@
+diff --git a/.codex/history/HANDOFF-0.5.2.md b/.codex/history/HANDOFF-0.5.2.md
+index a958daa..b4b4fc7 100644
+--- a/.codex/history/HANDOFF-0.5.2.md
++++ b/.codex/history/HANDOFF-0.5.2.md
+@@ -8,7 +8,7 @@ The VirtualXRay properties panel has a compact, collapsible Collimation section.
+ 
+ Horizontal steering is applied first around the reference vertical axis. Vertical steering follows around the negative horizontal axis of that steered frame. Roll is applied last around the resulting forward beam axis using the right-hand rule. Every change is calculated from the same stored reference beam, never incrementally from the last result. Roll changes only the field horizontal and vertical axes; the central axis, source/detector pose, and field dimensions remain fixed.
+ 
+-The three displayed angles are relative values initialized at zero when alignment is performed. Alignment resets all angles to zero. Changing field dimensions preserves the orientation reference. Turning physical collimation on or off and ordinary property refreshes leave the current reference and angles intact. When an external update replaces `directional_beam_geometry`, the panel rebases the reference to the replacement and resets its relative controls to zero.
++The three displayed angles are relative values initialized at zero when alignment is performed. Alignment resets all angles to zero. Changing field dimensions preserves the orientation reference. Turning physical collimation on or off and ordinary property refreshes leave the current reference and angles intact. The explicit device geometry update transition replaces `directional_beam_geometry`, rebases the model reference, and resets the relative controls to zero.
+ 
+ Alignment aims from the source position to the active detector center. It projects the detector up direction into the plane perpendicular to that axis and constructs a right-handed orthonormal frame through `RectangularBeamGeometry`, which validates the result. Degenerate source-to-detector geometry produces a visible status error.
+ 
+@@ -18,17 +18,41 @@ Scene persistence stores the effective `directional_beam_geometry`, including th
+ 
+ The 0.5.1 projection and exposure-mask behavior is unchanged. Parallel-beam collimation remains unsupported.
+ 
++## Angle reset diagnosis and state ownership
++
++The projection path was traced through `PropVirtualXRay.on_run_simulation()`, `VirtualXRay.project_and_cache()`, `_display_image_array()`, and the properties dock. `project_and_cache()` reads the effective beam through the projection configuration and does not replace it. When displaying a result, the GUI can call `AP.updateProperties()` on the existing property panel; this is an ordinary refresh. Adding the first detector image adds a workspace item but does not select it or recreate the VirtualXRay panel. Thus the projection operation itself does not rebase the beam.
++
++The confirmed lifecycle defect was that the reference orientation and H/V/roll values lived only on `PropVirtualXRay`. `DockWidgetProperties.selectionChanged()` constructs a new panel when selection changes, so returning to the VirtualXRay recreated those temporary values as zero and used the current effective beam as a new reference. A queued device geometry event can also be processed while the projection handler pumps Qt events; that update intentionally replaces the effective beam and rebases controls. Without a runtime event trace, the reported projection-time reset cannot be attributed to one of those events, but projection code does not itself reset the angles.
++
++The minimal edit state now lives on `VirtualXRay`: a session-only reference geometry and a three-angle tuple. `directional_beam_geometry` remains the effective geometry used by projection and the only beam orientation serialized. The panel reads these model values and edits them through explicit model methods; it no longer infers rebases from Python object identity.
++
++Synchronization transitions are explicit:
++
++- Alignment, successful device geometry application, and scene loading set a new reference, set effective geometry to that frame, and reset H/V/roll to zero.
++- Angle edits recompute effective geometry from the stored reference and all three current angles.
++- Field edits update the dimensions on the reference, then recompute the effective geometry using unchanged angles.
++- Projection, ordinary property refresh, panel recreation, selection changes, and collimation enable toggles do not alter the model edit state.
++- A failed device geometry update leaves the previous reference, angles, and effective beam intact.
++
++Scene loading rebases session controls to zero around the saved effective frame. Scene format and protocol v1 remain unchanged.
++
+ ## Files changed
+ 
++- `virtualXRay.py`
+ - `gui/propVirtualXRay.py`
++- `sceneFormat.py`
++- `device_link/integration.py`
++- `pluginMain.py`
+ - `tests/unit/test_collimation_controls.py`
++- `tests/unit/device_link/test_device_server.py`
+ - `.codex/history/HANDOFF-0.5.2.md`
++- `.codex/history/REVIEW-0.5.2.patch` (correction delta against the staged 0.5.2 implementation; excludes itself)
+ 
+ ## Verification
+ 
+ Complete virtRTG unit suite: **111 passed, 5 skipped, 10 subtests passed**.
+ 
+-Focused collimation coverage verifies pure roll with a non-square exposure field, stable three-angle edits and reset, dimension and activation stability, ordinary refresh behavior, external geometry rebase, and rolled-frame scene persistence/rebase. Existing device-link tests are included in the full suite. Python compilation passed. Ruff ran on the changed Python modules; no new diagnostics were introduced compared with the staged 0.5.2 implementation (15 existing diagnostics remain in `gui/propVirtualXRay.py`, and the new test file has none). `git diff --check` and `git diff --cached --check` passed.
++Focused collimation coverage verifies pure roll with a non-square exposure field, stable three-angle edits and reset, field and activation stability, actual projection plus ordinary refresh, real panel recreation and object switching, external device update rebasing and rollback, and scene load rebasing. The complete suite also covers existing 0.5.1 collimation behavior. Python compilation passed. Ruff ran on all changed Python modules: **39 existing diagnostics remain; 0 new diagnostics** compared with the staged 0.5.2 implementation. Staged and unstaged `git diff --check` passed for production code, tests, and handoff documentation; the unified patch artifact is excluded because it contains source indentation as patch text.
+ 
+ Full manual browser-to-plugin GUI validation remains pending; no interactive browser session was performed.
+ 
+diff --git a/device_link/integration.py b/device_link/integration.py
+index 1cac053..1d643ef 100644
+--- a/device_link/integration.py
++++ b/device_link/integration.py
+@@ -92,9 +92,10 @@ class DeviceLinkIntegration(QObject):
+ 		try:
+ 			for name in attributes:
+ 				setattr(virtual_xray, name, np.asarray(geometry[name], dtype=np.float32))
+-			virtual_xray.directional_beam_geometry = RectangularBeamGeometry(
++			beam_geometry = RectangularBeamGeometry(
+ 				geometry["beam_axis_ref"], geometry["beam_horizontal_ref"], geometry["beam_vertical_ref"],
+ 				geometry["field_width_cm"], geometry["field_height_cm"], geometry["field_reference_distance_mm"])
++			virtual_xray.directional_beam_geometry = beam_geometry
+ 			virtual_xray.build_geometry()
+ 		except Exception as exc:
+ 			for name, value in previous.items():
+@@ -103,5 +104,6 @@ class DeviceLinkIntegration(QObject):
+ 			_restore_build_geometry_backfills(virtual_xray, backfills)
+ 			self.plugin._on_device_server_status("invalid-geometry", f"Accepted state retained; VirtualXRay geometry rejected: {exc}")
+ 			return
++		virtual_xray.reset_collimation_reference(beam_geometry)
+ 		self.plugin.refresh_virtual_xray(virtual_xray)
+ 		self.plugin._on_device_server_status("geometry-applied", f"Updated {virtual_xray.label or 'VirtualXRay'}; no projection requested")
+diff --git a/gui/propVirtualXRay.py b/gui/propVirtualXRay.py
+index 901baca..d8adf60 100644
+--- a/gui/propVirtualXRay.py
++++ b/gui/propVirtualXRay.py
+@@ -93,68 +93,6 @@ def _build_beam_aligned_to_detector(virtual_xray, field_width_cm=15.0, field_hei
+ 	)
+ 
+ 
+-def _rotate_beam_vector(vector, axis, angle_radians):
+-	"""Rotate one vector with Rodrigues' formula around a normalized axis."""
+-	axis = _unit_vector(axis, "Beam rotation axis")
+-	vector = np.asarray(vector, dtype=np.float64)
+-	cosine = float(np.cos(angle_radians))
+-	sine = float(np.sin(angle_radians))
+-	return (vector * cosine + np.cross(axis, vector) * sine
+-			+ axis * float(np.dot(axis, vector)) * (1.0 - cosine))
+-
+-
+-def _beam_with_offsets(reference_beam, horizontal_degrees, vertical_degrees, roll_degrees=0.0):
+-	"""Return a beam rotated from a stable reference orientation.
+-
+-	Positive horizontal rotation steers the central axis toward the reference
+-	horizontal vector. Positive vertical rotation steers it toward the reference
+-	vertical vector. Positive roll follows the right-hand rule around the resulting
+-	forward beam axis. All three rotations start from the same reference frame.
+-	Offsets are relative controls, not persisted absolute angles.
+-	"""
+-	horizontal_angle = float(np.deg2rad(horizontal_degrees))
+-	vertical_angle = float(np.deg2rad(vertical_degrees))
+-	roll_angle = float(np.deg2rad(roll_degrees))
+-	first_axis = np.asarray(reference_beam.beam_vertical_ref, dtype=np.float64)
+-	first_frame = [
+-		_rotate_beam_vector(value, first_axis, horizontal_angle)
+-		for value in (
+-			reference_beam.beam_axis_ref,
+-			reference_beam.beam_horizontal_ref,
+-			reference_beam.beam_vertical_ref,
+-		)
+-	]
+-	axis, horizontal, vertical = first_frame
+-	second_axis = -horizontal
+-	axis, horizontal, vertical = [
+-		_rotate_beam_vector(value, second_axis, vertical_angle)
+-		for value in (axis, horizontal, vertical)
+-	]
+-	axis, horizontal, vertical = [
+-		_rotate_beam_vector(value, axis, roll_angle)
+-		for value in (axis, horizontal, vertical)
+-	]
+-	return RectangularBeamGeometry(
+-		beam_axis_ref=axis,
+-		beam_horizontal_ref=horizontal,
+-		beam_vertical_ref=vertical,
+-		field_width_cm=reference_beam.field_width_cm,
+-		field_height_cm=reference_beam.field_height_cm,
+-		field_reference_distance_mm=reference_beam.field_reference_distance_mm,
+-	)
+-
+-
+-def _beam_with_dimensions(beam, field_width_cm, field_height_cm, field_reference_distance_mm):
+-	"""Return a beam with updated dimensions and its existing orientation."""
+-	return RectangularBeamGeometry(
+-		beam_axis_ref=beam.beam_axis_ref,
+-		beam_horizontal_ref=beam.beam_horizontal_ref,
+-		beam_vertical_ref=beam.beam_vertical_ref,
+-		field_width_cm=field_width_cm,
+-		field_height_cm=field_height_cm,
+-		field_reference_distance_mm=field_reference_distance_mm,
+-	)
+-
+ class PropVirtualXRay(FlowPanelMixin, PropWidget):
+ 	"""Edit basic source and detector parameters of one `VirtualXRay` scene node."""
+ 
+@@ -162,11 +100,6 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
+ 		"""Build the property editor widgets and bind them to the provided scene object."""
+ 		super().__init__(parent)
+ 		self.obj_ref = weakref.ref(_obj)
+-		self._beam_offset_object = None
+-		self._beam_offset_reference = None
+-		self._beam_offset_geometry = None
+-		self._beam_offset_values = (0.0, 0.0, 0.0)
+-		self._updating_local_beam = False
+ 		self._setup_ui()
+ 		self._connect_signals()
+ 
+@@ -1392,15 +1325,9 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
+ 		self._after_change(obj)
+ 
+ 	def _sync_collimation_controls(self, obj):
+-		"""Reflect beam geometry and relative adjustments without inventing geometry."""
++		"""Reflect model-owned collimation geometry and session-relative angles."""
+ 		beam = getattr(obj, "directional_beam_geometry", None)
+-		if self._beam_offset_object is not obj or (
+-			beam is not self._beam_offset_geometry and not self._updating_local_beam
+-		):
+-			self._beam_offset_object = obj
+-			self._beam_offset_reference = beam
+-			self._beam_offset_geometry = beam
+-			self._beam_offset_values = (0.0, 0.0, 0.0)
++		angles = obj.collimation_angles_degrees
+ 
+ 		available = beam is not None
+ 		self.collimationStatusLabel.setText(
+@@ -1425,48 +1352,33 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
+ 			self.beamFieldWidthSpin.setValue(15.0)
+ 			self.beamFieldHeightSpin.setValue(10.0)
+ 			self.beamReferenceDistanceSpin.setValue(1000.0)
+-		self.beamHorizontalOffsetSpin.setValue(float(self._beam_offset_values[0]))
+-		self.beamVerticalOffsetSpin.setValue(float(self._beam_offset_values[1]))
+-		self.beamRollSpin.setValue(float(self._beam_offset_values[2]))
++		self.beamHorizontalOffsetSpin.setValue(float(angles[0]))
++		self.beamVerticalOffsetSpin.setValue(float(angles[1]))
++		self.beamRollSpin.setValue(float(angles[2]))
+ 
+ 	def on_collimation_field_changed(self, _value=None):
+ 		"""Change field dimensions while retaining orientation and current adjustments."""
+ 		obj = self.obj_ref()
+-		reference = self._beam_offset_reference
+-		if obj is None or reference is None:
++		if obj is None or obj.collimation_reference_geometry is None:
+ 			return
+-		reference = _beam_with_dimensions(
+-			reference,
++		obj.set_collimation_dimensions(
+ 			self.beamFieldWidthSpin.value(),
+ 			self.beamFieldHeightSpin.value(),
+ 			self.beamReferenceDistanceSpin.value(),
+ 		)
+-		self._beam_offset_reference = reference
+-		beam = _beam_with_offsets(reference, *self._beam_offset_values)
+-		self._apply_local_beam_geometry(obj, beam)
++		self._after_change(obj)
+ 
+ 	def on_collimation_offset_changed(self, _value=None):
+-		"""Apply both angle adjustments from the stable reference orientation."""
++		"""Apply all three angle adjustments from the model's stable reference."""
+ 		obj = self.obj_ref()
+-		reference = self._beam_offset_reference
+-		if obj is None or reference is None:
++		if obj is None or obj.collimation_reference_geometry is None:
+ 			return
+-		self._beam_offset_values = (
++		obj.set_collimation_angles(
+ 			self.beamHorizontalOffsetSpin.value(),
+ 			self.beamVerticalOffsetSpin.value(),
+ 			self.beamRollSpin.value(),
+ 		)
+-		self._apply_local_beam_geometry(obj, _beam_with_offsets(reference, *self._beam_offset_values))
+-
+-	def _apply_local_beam_geometry(self, obj, beam):
+-		"""Store a local beam edit while retaining the relative-angle reference."""
+-		self._updating_local_beam = True
+-		try:
+-			obj.directional_beam_geometry = beam
+-			self._beam_offset_geometry = beam
+-			self._after_change(obj)
+-		finally:
+-			self._updating_local_beam = False
++		self._after_change(obj)
+ 
+ 	def on_align_beam_to_detector(self):
+ 		"""Initialize the beam toward the detector without changing activation mode."""
+@@ -1483,9 +1395,8 @@ class PropVirtualXRay(FlowPanelMixin, PropWidget):
+ 		except (TypeError, ValueError) as exc:
+ 			self.collimationStatusLabel.setText(f"Unable to align beam: {exc}")
+ 			return
+-		self._beam_offset_reference = beam
+-		self._beam_offset_values = (0.0, 0.0, 0.0)
+-		self._apply_local_beam_geometry(obj, beam)
++		obj.reset_collimation_reference(beam)
++		self._after_change(obj)
+ 
+ 	@pyqtSlot()
+ 	def on_apply_geometry_preset(self):
+diff --git a/pluginMain.py b/pluginMain.py
+index f03799b..716dfcf 100644
+--- a/pluginMain.py
++++ b/pluginMain.py
+@@ -352,7 +352,8 @@ class VirtualRTG(PluginInterface):
+ 		return matches[0] if len(selected) == 1 and len(matches) == 1 else None
+ 
+ 	def refresh_virtual_xray(self, virtual_xray):
+-		"""Refresh scene views after GUI-thread geometry fields have been updated."""
++		"""Refresh views and the selected geometry panel after a device geometry update."""
++		AP.updateProperties()
+ 		AP.updateAllViews()
+ 
+ 
+diff --git a/sceneFormat.py b/sceneFormat.py
+index 77671c5..dddba5b 100644
+--- a/sceneFormat.py
++++ b/sceneFormat.py
+@@ -606,9 +606,8 @@ def _apply_virtual_xray_payload(virtual_xray, payload):
+ 	virtual_xray.projection_mode = str(geometry.get("projection_mode", virtual_xray.projection_mode))
+ 	virtual_xray.physical_collimation_enabled = bool(geometry.get("physical_collimation_enabled", False))
+ 	beam_payload = geometry.get("directional_beam_geometry")
+-	virtual_xray.directional_beam_geometry = (
+-		None if beam_payload is None else RectangularBeamGeometry(**dict(beam_payload))
+-	)
++	beam_geometry = None if beam_payload is None else RectangularBeamGeometry(**dict(beam_payload))
++	virtual_xray.reset_collimation_reference(beam_geometry)
+ 	virtual_xray.detector_center_ref = np.asarray(geometry.get("detector_center_ref", virtual_xray.detector_center_ref), dtype=np.float32)
+ 	virtual_xray.detector_normal_ref = np.asarray(geometry.get("detector_normal_ref", virtual_xray.detector_normal_ref), dtype=np.float32)
+ 	virtual_xray.detector_up_ref = np.asarray(geometry.get("detector_up_ref", virtual_xray.detector_up_ref), dtype=np.float32)
+diff --git a/tests/unit/device_link/test_device_server.py b/tests/unit/device_link/test_device_server.py
+index 9acd4ca..8252384 100644
+--- a/tests/unit/device_link/test_device_server.py
++++ b/tests/unit/device_link/test_device_server.py
+@@ -205,6 +205,11 @@ class FakeVirtualXRay:
+ 	def build_geometry(self):
+ 		self.builds += 1
+ 
++	def reset_collimation_reference(self, reference_geometry):
++		self.directional_beam_geometry = reference_geometry
++		self.collimation_reference_geometry = reference_geometry
++		self.collimation_angles_degrees = (0.0, 0.0, 0.0)
++
+ 
+ class FakePlugin:
+ 	def __init__(self, selected):
+@@ -330,9 +335,16 @@ def test_failed_geometry_rebuild_restores_inputs_and_build_backfills(qapp, monke
+ def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp, monkeypatch):
+ 	from plugins.virtRTG.device_link.device_adapter import DeviceState
+ 	from plugins.virtRTG.virtualXRay import VirtualXRay
+-	from plugins.virtRTG.xray.xrayProjection import XRayProjectionGeometry
++	from plugins.virtRTG.xray.xrayProjection import (
++		RectangularBeamGeometry,
++		XRayProjectionGeometry,
++	)
+ 
+ 	virtual_xray = VirtualXRay()
++	virtual_xray.reset_collimation_reference(
++		RectangularBeamGeometry((0, 0, 1), (1, 0, 0), (0, 1, 0), 15.0, 10.0, 1000.0)
++	)
++	virtual_xray.set_collimation_angles(12.0, -6.0, 28.0)
+ 	plugin = FakePlugin(virtual_xray)
+ 	bridge = DeviceLinkIntegration(plugin)
+ 	projection_calls = []
+@@ -346,13 +358,18 @@ def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp
+ 	assert initial_beam.beam_axis_ref == (0.0, -1.0, 0.0)
+ 	assert initial_beam.field_width_cm == state.collimator.width_cm
+ 	assert initial_beam.field_height_cm == state.collimator.height_cm
++	assert virtual_xray.collimation_reference_geometry == initial_beam
++	assert virtual_xray.collimation_angles_degrees == (0.0, 0.0, 0.0)
+ 	initial_detector = tuple(getattr(virtual_xray, name).copy() for name in (
+ 		"detector_center_ref", "detector_normal_ref", "detector_up_ref"))
+ 
++	virtual_xray.set_collimation_angles(14.0, -8.0, 23.0)
+ 	state.poses["tube"].rotation_rad = (0.0, 0.0, math.pi / 2.0)
+ 	bridge.signals.geometry_received.emit(state.to_dict())
+ 	assert wait_qt(qapp, lambda: len(plugin.refreshes) == 2)
+ 	rotated_beam = virtual_xray.directional_beam_geometry
++	assert virtual_xray.collimation_reference_geometry == rotated_beam
++	assert virtual_xray.collimation_angles_degrees == (0.0, 0.0, 0.0)
+ 	assert rotated_beam.beam_axis_ref[0] == pytest.approx(1.0)
+ 	assert rotated_beam.beam_axis_ref[1] == pytest.approx(0.0, abs=1e-7)
+ 	for name, expected in zip(("detector_center_ref", "detector_normal_ref", "detector_up_ref"), initial_detector):
+@@ -363,6 +380,8 @@ def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp
+ 	attrs = ("source_position_ref", "detector_center_ref", "detector_normal_ref", "detector_up_ref")
+ 	before_failure = {name: getattr(virtual_xray, name).copy() for name in attrs}
+ 	beam_before_failure = virtual_xray.directional_beam_geometry
++	angles_before_failure = virtual_xray.collimation_angles_degrees
++	reference_before_failure = virtual_xray.collimation_reference_geometry
+ 	refresh_count = len(plugin.refreshes)
+ 	monkeypatch.setattr(XRayProjectionGeometry, "from_detector_pose",
+ 		lambda **_kwargs: (_ for _ in ()).throw(ValueError("rebuild failed")))
+@@ -372,6 +391,8 @@ def test_directional_beam_device_update_rotation_rollback_and_no_projection(qapp
+ 	for name, expected in before_failure.items():
+ 		assert np_allclose(getattr(virtual_xray, name), expected)
+ 	assert virtual_xray.directional_beam_geometry is beam_before_failure
++	assert virtual_xray.collimation_reference_geometry is reference_before_failure
++	assert virtual_xray.collimation_angles_degrees == angles_before_failure
+ 	assert len(plugin.refreshes) == refresh_count
+ 	assert virtual_xray.last_raw_projection is None
+ 	assert not projection_calls
+diff --git a/tests/unit/test_collimation_controls.py b/tests/unit/test_collimation_controls.py
+index 403fd4b..2f60932 100644
+--- a/tests/unit/test_collimation_controls.py
++++ b/tests/unit/test_collimation_controls.py
+@@ -2,20 +2,20 @@
+ 
+ from __future__ import annotations
+ 
+-import inspect
+-import weakref
++import os
+ from dataclasses import replace
+-from types import MethodType, SimpleNamespace
+ 
+ import numpy as np
+ import pytest
+ from plugins.virtRTG.gui.propVirtualXRay import (
+-	_beam_with_dimensions,
+-	_beam_with_offsets,
+ 	_build_beam_aligned_to_detector,
+ )
+ from plugins.virtRTG.sceneFormat import load_virtual_xray_scene, save_virtual_xray_scene
+-from plugins.virtRTG.virtualXRay import VirtualXRay
++from plugins.virtRTG.virtualXRay import (
++	VirtualXRay,
++	_beam_with_dimensions,
++	_beam_with_offsets,
++)
+ from plugins.virtRTG.xray.xrayProjection import (
+ 	RectangularBeamGeometry,
+ 	XRayPhysicsModel,
+@@ -23,6 +23,14 @@ from plugins.virtRTG.xray.xrayProjection import (
+ 	XRayProjectionGeometry,
+ 	XRayScene,
+ )
++from PyQt5.QtWidgets import QApplication
++
++os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
++
++
++def _get_qapp():
++	"""Return the retained offscreen Qt application for real property panel tests."""
++	return QApplication.instance() or QApplication([])
+ 
+ 
+ class _MaskSampleSource:
+@@ -100,6 +108,18 @@ def test_dimension_changes_preserve_orientation_and_offsets_are_stable():
+ 	assert np.dot(first.beam_axis_ref, base.beam_horizontal_ref) > 0.0
+ 	assert np.dot(first.beam_axis_ref, base.beam_vertical_ref) < 0.0
+ 
++	virtual_xray = VirtualXRay()
++	virtual_xray.reset_collimation_reference(base)
++	virtual_xray.set_collimation_angles(8.0, -5.0, 12.0)
++	effective_before_dimensions = virtual_xray.directional_beam_geometry
++	virtual_xray.set_collimation_dimensions(22.0, 17.0, 850.0)
++	assert virtual_xray.collimation_angles_degrees == (8.0, -5.0, 12.0)
++	assert virtual_xray.collimation_reference_geometry.beam_axis_ref == base.beam_axis_ref
++	assert virtual_xray.directional_beam_geometry.field_width_cm == 22.0
++	assert virtual_xray.directional_beam_geometry.field_height_cm == 17.0
++	assert virtual_xray.directional_beam_geometry.field_reference_distance_mm == 850.0
++	assert virtual_xray.directional_beam_geometry != effective_before_dimensions
++
+ 
+ def test_pure_roll_rotates_only_the_field_axes_and_preserves_scene_geometry():
+ 	"""Roll changes the rectangle orientation around its fixed central beam axis."""
+@@ -136,33 +156,42 @@ def test_three_angle_edits_return_exactly_to_the_reference_without_drift():
+ 
+ 
+ def test_gui_angle_sequence_and_enable_toggle_keep_one_reference_frame():
+-	"""Mirror edits and activation refreshes through the panel's existing state path."""
++	"""Edit through actual controls and preserve model-owned angles through refreshes."""
+ 	from plugins.virtRTG.gui.propVirtualXRay import PropVirtualXRay
+ 
++	app = _get_qapp()
+ 	virtual_xray = VirtualXRay()
+ 	base = _build_beam_aligned_to_detector(virtual_xray)
+-	virtual_xray.directional_beam_geometry = base
+-	panel = _collimation_panel_stub(virtual_xray, base, (0.0, 0.0, 0.0))
+-	panel._after_change = lambda obj: PropVirtualXRay._sync_collimation_controls(panel, obj)
+-	panel._apply_local_beam_geometry = MethodType(PropVirtualXRay._apply_local_beam_geometry, panel)
++	virtual_xray.reset_collimation_reference(base)
++	panel = PropVirtualXRay(virtual_xray)
++	panel._after_change = lambda obj: panel.updateProperties()
++	panel.updateProperties()
+ 
+ 	for angles in ((10.0, 0.0, 0.0), (20.0, 0.0, 0.0), (20.0, -10.0, 0.0), (20.0, -10.0, 35.0)):
+-		panel.beamHorizontalOffsetSpin.setValue(angles[0])
+-		panel.beamVerticalOffsetSpin.setValue(angles[1])
+-		panel.beamRollSpin.setValue(angles[2])
+-		PropVirtualXRay.on_collimation_offset_changed(panel)
++		for spin, value in zip(
++			(panel.beamHorizontalOffsetSpin, panel.beamVerticalOffsetSpin, panel.beamRollSpin), angles,
++		):
++			spin.setValue(value)
++		app.processEvents()
+ 
+ 	geometry_before_toggle = virtual_xray.directional_beam_geometry
+-	PropVirtualXRay.on_collimation_toggled(panel, True)
+-	PropVirtualXRay.on_collimation_toggled(panel, False)
++	panel.collimationCheck.setChecked(True)
++	panel.collimationCheck.setChecked(False)
+ 	assert virtual_xray.directional_beam_geometry is geometry_before_toggle
+-	assert panel._beam_offset_reference is base
+-	assert panel._beam_offset_values == (20.0, -10.0, 35.0)
++	assert virtual_xray.collimation_angles_degrees == (20.0, -10.0, 35.0)
++	assert panel.beamRollSpin.value() == 35.0
++
++	panel.beamFieldWidthSpin.setValue(22.0)
++	panel.beamFieldHeightSpin.setValue(12.0)
++	panel.beamReferenceDistanceSpin.setValue(900.0)
++	assert virtual_xray.collimation_angles_degrees == (20.0, -10.0, 35.0)
++	assert virtual_xray.directional_beam_geometry.field_width_cm == 22.0
++	assert virtual_xray.directional_beam_geometry.field_height_cm == 12.0
++	assert virtual_xray.directional_beam_geometry.field_reference_distance_mm == 900.0
+ 
+ 	panel.beamHorizontalOffsetSpin.setValue(0.0)
+ 	panel.beamVerticalOffsetSpin.setValue(0.0)
+ 	panel.beamRollSpin.setValue(0.0)
+-	PropVirtualXRay.on_collimation_offset_changed(panel)
+ 	for actual, expected in zip(
+ 		(
+ 			virtual_xray.directional_beam_geometry.beam_axis_ref,
+@@ -172,13 +201,55 @@ def test_gui_angle_sequence_and_enable_toggle_keep_one_reference_frame():
+ 		(base.beam_axis_ref, base.beam_horizontal_ref, base.beam_vertical_ref),
+ 	):
+ 		assert np.allclose(actual, expected, atol=1e-12)
+-	assert panel._beam_offset_values == (0.0, 0.0, 0.0)
++	assert virtual_xray.collimation_angles_degrees == (0.0, 0.0, 0.0)
++	panel.on_align_beam_to_detector()
++	assert virtual_xray.collimation_angles_degrees == (0.0, 0.0, 0.0)
++	assert virtual_xray.directional_beam_geometry.field_width_cm == 22.0
++	assert virtual_xray.directional_beam_geometry.field_height_cm == 12.0
++	assert virtual_xray.directional_beam_geometry.field_reference_distance_mm == 900.0
++
++	panel.deleteLater()
++	app.processEvents()
++
++
++def test_projection_panel_recreation_and_object_selection_retain_angle_state(monkeypatch):
++	"""Projection and real property panel lifecycle preserve the model edit state."""
++	from plugins.virtRTG.gui.propVirtualXRay import PropVirtualXRay
+ 
+-	external = _beam_with_offsets(base, -4.0, 2.0, 7.0)
+-	virtual_xray.directional_beam_geometry = external
+-	PropVirtualXRay._sync_collimation_controls(panel, virtual_xray)
+-	assert panel._beam_offset_reference is external
+-	assert panel._beam_offset_values == (0.0, 0.0, 0.0)
++	app = _get_qapp()
++	virtual_xray = VirtualXRay()
++	virtual_xray.detector_shape_hw = [3, 3]
++	beam = _build_beam_aligned_to_detector(virtual_xray, 15.0, 10.0, 1000.0)
++	virtual_xray.reset_collimation_reference(beam)
++	virtual_xray.set_collimation_angles(18.0, -7.0, 32.0)
++	virtual_xray.physical_collimation_enabled = True
++	panel_before = PropVirtualXRay(virtual_xray)
++	panel_before.updateProperties()
++	monkeypatch.setattr(virtual_xray, "build_scene", lambda: XRayScene.from_sample_sources([_MaskSampleSource()]))
++	virtual_xray.project_and_cache()
++	assert virtual_xray.collimation_angles_degrees == (18.0, -7.0, 32.0)
++	panel_before.updateProperties()
++	assert (
++		panel_before.beamHorizontalOffsetSpin.value(),
++		panel_before.beamVerticalOffsetSpin.value(),
++		panel_before.beamRollSpin.value(),
++	) == (18.0, -7.0, 32.0)
++	panel_before.deleteLater()
++
++	other_xray = VirtualXRay()
++	other_panel = PropVirtualXRay(other_xray)
++	other_panel.updateProperties()
++	other_panel.deleteLater()
++	panel_after = PropVirtualXRay(virtual_xray)
++	panel_after.updateProperties()
++	assert (
++		panel_after.beamHorizontalOffsetSpin.value(),
++		panel_after.beamVerticalOffsetSpin.value(),
++		panel_after.beamRollSpin.value(),
++	) == (18.0, -7.0, 32.0)
++	assert virtual_xray.collimation_angles_degrees == (18.0, -7.0, 32.0)
++	panel_after.deleteLater()
++	app.processEvents()
+ 
+ 
+ def test_roll_rotates_non_square_exposure_footprint_without_steering_axis():
+@@ -211,7 +282,8 @@ def test_offsets_and_scene_round_trip_leave_source_detector_geometry_unchanged(t
+ 	"""Persist the effective adjusted frame without persisting misleading absolute angles."""
+ 	virtual_xray = VirtualXRay()
+ 	beam = _build_beam_aligned_to_detector(virtual_xray)
+-	virtual_xray.directional_beam_geometry = _beam_with_offsets(beam, 4.0, 3.0, 35.0)
++	virtual_xray.reset_collimation_reference(beam)
++	virtual_xray.set_collimation_angles(4.0, 3.0, 35.0)
+ 	virtual_xray.physical_collimation_enabled = True
+ 	source_before = virtual_xray.source_position_ref.copy()
+ 	detector_before = virtual_xray.detector_center_ref.copy()
+@@ -231,12 +303,17 @@ def test_offsets_and_scene_round_trip_leave_source_detector_geometry_unchanged(t
+ 	assert np.allclose(loaded.directional_beam_geometry.beam_axis_ref, virtual_xray.directional_beam_geometry.beam_axis_ref)
+ 	assert np.allclose(loaded.directional_beam_geometry.beam_horizontal_ref, virtual_xray.directional_beam_geometry.beam_horizontal_ref)
+ 	assert np.allclose(loaded.directional_beam_geometry.beam_vertical_ref, virtual_xray.directional_beam_geometry.beam_vertical_ref)
+-	loaded_panel = _collimation_panel_stub(loaded, None, (0.0, 0.0, 0.0))
+-	loaded_panel._beam_offset_object = None
++	assert loaded.collimation_reference_geometry == loaded.directional_beam_geometry
++	assert loaded.collimation_angles_degrees == (0.0, 0.0, 0.0)
+ 	from plugins.virtRTG.gui.propVirtualXRay import PropVirtualXRay
+-	PropVirtualXRay._sync_collimation_controls(loaded_panel, loaded)
+-	assert loaded_panel._beam_offset_reference is loaded.directional_beam_geometry
+-	assert loaded_panel._beam_offset_values == (0.0, 0.0, 0.0)
++	app = _get_qapp()
++	loaded_panel = PropVirtualXRay(loaded)
++	loaded_panel.updateProperties()
++	assert loaded_panel.beamHorizontalOffsetSpin.value() == 0.0
++	assert loaded_panel.beamVerticalOffsetSpin.value() == 0.0
++	assert loaded_panel.beamRollSpin.value() == 0.0
++	loaded_panel.deleteLater()
++	app.processEvents()
+ 
+ 
+ def test_dimension_changes_retain_reference_orientation_for_all_angles():
+@@ -252,65 +329,3 @@ def test_dimension_changes_retain_reference_orientation_for_all_angles():
+ 	assert np.allclose(updated.beam_horizontal_ref, angled.beam_horizontal_ref)
+ 	assert np.allclose(updated.beam_vertical_ref, angled.beam_vertical_ref)
+ 	assert (updated.field_width_cm, updated.field_height_cm, updated.field_reference_distance_mm) == (25.0, 45.0, 800.0)
+-
+-
+-def test_collimation_refresh_keeps_local_angle_reference_and_roll_is_blocked():
+-	"""Routine property refresh retains the same reference and three relative values."""
+-	from plugins.virtRTG.gui.propVirtualXRay import PropVirtualXRay
+-
+-	beam = _build_beam_aligned_to_detector(VirtualXRay())
+-	current = _beam_with_offsets(beam, 20.0, -10.0, 35.0)
+-	virtual_xray = VirtualXRay()
+-	virtual_xray.directional_beam_geometry = current
+-	panel = _collimation_panel_stub(virtual_xray, beam, (20.0, -10.0, 35.0))
+-	roll_field = panel.beamRollSpin
+-
+-	PropVirtualXRay._sync_collimation_controls(panel, virtual_xray)
+-	assert panel._beam_offset_reference is beam
+-	assert panel._beam_offset_values == (20.0, -10.0, 35.0)
+-	assert roll_field.value() == 35.0
+-	assert roll_field.enabled
+-	assert "self.beamRollSpin" in inspect.getsource(PropVirtualXRay.blockAll)
+-	assert "self.beamRollSpin.valueChanged.connect(self.on_collimation_offset_changed)" in inspect.getsource(PropVirtualXRay._connect_signals)
+-
+-
+-def _collimation_panel_stub(virtual_xray, reference, angle_values):
+-	"""Create the small duck-typed control surface used by synchronization tests."""
+-	current = virtual_xray.directional_beam_geometry
+-	return SimpleNamespace(
+-		obj_ref=weakref.ref(virtual_xray),
+-		_beam_offset_object=virtual_xray,
+-		_beam_offset_reference=reference,
+-		_beam_offset_geometry=current,
+-		_beam_offset_values=angle_values,
+-		_updating_local_beam=False,
+-		collimationStatusLabel=_ValueField(),
+-		collimationCheck=_ValueField(),
+-		beamFieldWidthSpin=_ValueField(),
+-		beamFieldHeightSpin=_ValueField(),
+-		beamReferenceDistanceSpin=_ValueField(),
+-		beamHorizontalOffsetSpin=_ValueField(),
+-		beamVerticalOffsetSpin=_ValueField(),
+-		beamRollSpin=_ValueField(),
+-	)
+-
+-
+-class _ValueField:
+-	"""Minimal control double for testing synchronization without a full GUI."""
+-
+-	def __init__(self):
+-		self._value = None
+-		self.enabled = None
+-		self.text = None
+-
+-	def setValue(self, value):
+-		self._value = value
+-
+-	def value(self):
+-		return self._value
+-
+-	def setEnabled(self, value):
+-		self.enabled = value
+-
+-	def setText(self, value):
+-		self.text = value
+diff --git a/virtualXRay.py b/virtualXRay.py
+index 5f364f2..dbe1027 100644
+--- a/virtualXRay.py
++++ b/virtualXRay.py
+@@ -20,6 +20,7 @@ from .xray.xraySource import (
+ )
+ 
+ from .xray.xrayProjection import (
++	RectangularBeamGeometry,
+ 	XRayPhysicsModel,
+ 	XRayProjectionConfig,
+ 	XRayProjectionGeometry,
+@@ -37,6 +38,71 @@ from .xray.xrayAnnotationOverlay import (
+ )
+ 
+ 
++def _rotate_beam_vector(vector, axis, angle_radians):
++	"""Rotate one vector with Rodrigues' formula around a normalized axis."""
++	axis = np.asarray(axis, dtype=np.float64)
++	axis_norm = float(np.linalg.norm(axis))
++	if axis_norm <= 1e-9 or not np.isfinite(axis_norm):
++		raise ValueError("Beam rotation axis must have non-zero finite length.")
++	axis = axis / axis_norm
++	vector = np.asarray(vector, dtype=np.float64)
++	cosine = float(np.cos(angle_radians))
++	sine = float(np.sin(angle_radians))
++	return (vector * cosine + np.cross(axis, vector) * sine
++			+ axis * float(np.dot(axis, vector)) * (1.0 - cosine))
++
++
++def _beam_with_offsets(reference_beam, horizontal_degrees, vertical_degrees, roll_degrees=0.0):
++	"""Return a beam rotated from one stable reference frame.
++
++	Horizontal steering is around reference vertical toward reference horizontal.
++	Vertical steering follows around the steered frame's negative horizontal axis.
++	Roll follows around the resulting forward axis using the right-hand rule.
++	"""
++	horizontal_angle = float(np.deg2rad(horizontal_degrees))
++	vertical_angle = float(np.deg2rad(vertical_degrees))
++	roll_angle = float(np.deg2rad(roll_degrees))
++	first_axis = np.asarray(reference_beam.beam_vertical_ref, dtype=np.float64)
++	first_frame = [
++		_rotate_beam_vector(value, first_axis, horizontal_angle)
++		for value in (
++			reference_beam.beam_axis_ref,
++			reference_beam.beam_horizontal_ref,
++			reference_beam.beam_vertical_ref,
++		)
++	]
++	axis, horizontal, vertical = first_frame
++	second_axis = -horizontal
++	axis, horizontal, vertical = [
++		_rotate_beam_vector(value, second_axis, vertical_angle)
++		for value in (axis, horizontal, vertical)
++	]
++	axis, horizontal, vertical = [
++		_rotate_beam_vector(value, axis, roll_angle)
++		for value in (axis, horizontal, vertical)
++	]
++	return RectangularBeamGeometry(
++		beam_axis_ref=axis,
++		beam_horizontal_ref=horizontal,
++		beam_vertical_ref=vertical,
++		field_width_cm=reference_beam.field_width_cm,
++		field_height_cm=reference_beam.field_height_cm,
++		field_reference_distance_mm=reference_beam.field_reference_distance_mm,
++	)
++
++
++def _beam_with_dimensions(beam, field_width_cm, field_height_cm, field_reference_distance_mm):
++	"""Return a beam with updated dimensions and its existing orientation."""
++	return RectangularBeamGeometry(
++		beam_axis_ref=beam.beam_axis_ref,
++		beam_horizontal_ref=beam.beam_horizontal_ref,
++		beam_vertical_ref=beam.beam_vertical_ref,
++		field_width_cm=field_width_cm,
++		field_height_cm=field_height_cm,
++		field_reference_distance_mm=field_reference_distance_mm,
++	)
++
++
+ class VirtualXRay(Object):
+ 	"""Represent one virtual X-ray setup integrated with the existing scene tree."""
+ 
+@@ -211,6 +277,8 @@ class VirtualXRay(Object):
+ 		self.ray_direction_ref = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+ 		self.projection_mode = "cone"
+ 		self.directional_beam_geometry = None
++		self._collimation_reference_geometry = None
++		self._collimation_angles_degrees = (0.0, 0.0, 0.0)
+ 		self.physical_collimation_enabled = False
+ 		self.motion_frame_mode = "active"
+ 		self.step_mm = 1.0
+@@ -617,6 +685,53 @@ class VirtualXRay(Object):
+ 			collimation_enabled=bool(getattr(self, "physical_collimation_enabled", False)),
+ 		)
+ 
++	@property
++	def collimation_reference_geometry(self):
++		"""Return the session-only reference frame for relative field editing."""
++		return self._collimation_reference_geometry
++
++	@property
++	def collimation_angles_degrees(self):
++		"""Return horizontal, vertical and roll adjustments relative to the reference."""
++		return self._collimation_angles_degrees
++
++	def reset_collimation_reference(self, reference_geometry):
++		"""Set a new collimation reference and reset session-relative angles.
++
++		Use this transition for explicit detector alignment, accepted device geometry,
++		and scene loading. The effective beam remains the serialized/projection value;
++		this reference is session-only editing state.
++		"""
++		if reference_geometry is not None and not isinstance(reference_geometry, RectangularBeamGeometry):
++			raise TypeError("reference_geometry must be a RectangularBeamGeometry or None.")
++		self._collimation_reference_geometry = reference_geometry
++		self._collimation_angles_degrees = (0.0, 0.0, 0.0)
++		self.directional_beam_geometry = reference_geometry
++
++	def set_collimation_angles(self, horizontal_degrees, vertical_degrees, roll_degrees):
++		"""Recompute effective beam geometry from the stored reference orientation."""
++		reference = self._collimation_reference_geometry
++		if reference is None:
++			raise ValueError("Align the beam before adjusting its angles.")
++		angles = tuple(float(value) for value in (horizontal_degrees, vertical_degrees, roll_degrees))
++		geometry = _beam_with_offsets(reference, *angles)
++		self._collimation_angles_degrees = angles
++		self.directional_beam_geometry = geometry
++		return geometry
++
++	def set_collimation_dimensions(self, field_width_cm, field_height_cm, field_reference_distance_mm):
++		"""Update reference/effective field dimensions without rebasing its angles."""
++		reference = self._collimation_reference_geometry
++		if reference is None:
++			raise ValueError("Align the beam before editing its field dimensions.")
++		updated_reference = _beam_with_dimensions(
++			reference, field_width_cm, field_height_cm, field_reference_distance_mm,
++		)
++		geometry = _beam_with_offsets(updated_reference, *self._collimation_angles_degrees)
++		self._collimation_reference_geometry = updated_reference
++		self.directional_beam_geometry = geometry
++		return geometry
++
+ 	def build_scalar_preprocessor(self):
+ 		"""Build the optional source scalar preprocessor used before attenuation mapping."""
+ 		return XRayScalarPreprocessor(

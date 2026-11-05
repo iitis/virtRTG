@@ -92,9 +92,10 @@ class DeviceLinkIntegration(QObject):
 		try:
 			for name in attributes:
 				setattr(virtual_xray, name, np.asarray(geometry[name], dtype=np.float32))
-			virtual_xray.directional_beam_geometry = RectangularBeamGeometry(
+			beam_geometry = RectangularBeamGeometry(
 				geometry["beam_axis_ref"], geometry["beam_horizontal_ref"], geometry["beam_vertical_ref"],
 				geometry["field_width_cm"], geometry["field_height_cm"], geometry["field_reference_distance_mm"])
+			virtual_xray.directional_beam_geometry = beam_geometry
 			virtual_xray.build_geometry()
 		except Exception as exc:
 			for name, value in previous.items():
@@ -103,5 +104,6 @@ class DeviceLinkIntegration(QObject):
 			_restore_build_geometry_backfills(virtual_xray, backfills)
 			self.plugin._on_device_server_status("invalid-geometry", f"Accepted state retained; VirtualXRay geometry rejected: {exc}")
 			return
+		virtual_xray.reset_collimation_reference(beam_geometry)
 		self.plugin.refresh_virtual_xray(virtual_xray)
 		self.plugin._on_device_server_status("geometry-applied", f"Updated {virtual_xray.label or 'VirtualXRay'}; no projection requested")

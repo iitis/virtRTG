@@ -1,6 +1,6 @@
 # virtRTG Baseline
 
-Status: version 0.5.1 - Physical Beam Collimation is accepted. Full manual browser-to-plugin GUI validation remains outstanding.
+Status: version 0.5.2 - Standalone Collimation Controls is accepted. The standalone collimation controls, H/V steering, beam roll, and projection behavior were manually verified. Full manual browser-to-plugin GUI validation remains outstanding.
 
 ## Accepted 0.4.0 architecture
 
@@ -33,6 +33,14 @@ Status: version 0.5.1 - Physical Beam Collimation is accepted. Full manual brows
 - Scene geometry serialization includes the optional directional beam axes and field parameters. Loading reconstructs them through `RectangularBeamGeometry`; older scenes without the field keep no beam geometry and collimation disabled. The active DetectorImage NPZ package serializes its mask and accepts legacy packages without a mask, while rejecting malformed declared masks. NPY and text array formats cannot preserve mask metadata.
 - Device-state changes do not automatically run projections, and an acquired exposure mask remains associated with its acquisition if device geometry later changes.
 
+## Accepted 0.5.2 standalone collimation controls
+
+- The VirtualXRay properties panel provides a collapsible Collimation section for explicit physical-collimation activation, field width and height, reference distance, horizontal and vertical steering, beam roll, and explicit alignment to the detector. Alignment does not enable collimation or run a projection.
+- Beam orientation edits use the existing `RectangularBeamGeometry`. Horizontal steering is applied about the reference vertical axis, vertical steering about the negative horizontal axis of the already-steered frame, then roll about the resulting forward beam axis using the right-hand rule. The frame remains orthonormal and right-handed. All three rotations are recomputed from one stable reference geometry; roll changes only the field horizontal and vertical axes.
+- Horizontal, vertical, and roll values are relative session controls. Alignment resets them to zero and establishes a new reference. Dimension edits preserve the orientation reference; physical-collimation toggles and ordinary GUI refreshes do not rebase it. Projection, panel recreation, and selection changes preserve model-owned edit state. Successful external device geometry replacement explicitly rebases the controls; failed updates preserve the previous state.
+- The effective `directional_beam_geometry` is the geometry used by projection and the only beam orientation persisted. Scene loading restores that effective frame and rebases session controls to zero around it. Relative control values and the session reference are not serialized separately. Protocol v1 is unchanged.
+- Manual verification covered standalone rectangular collimation controls, H/V steering, beam roll, and projection behavior. Full manual browser-to-plugin GUI validation remains outstanding.
+
 ## Current limitations
 
 - Only one uniquely selected `VirtualXRay` can receive an update. There is no persistent session-to-object binding, local editing lock during remote control, or multi-device session routing.
@@ -41,7 +49,7 @@ Status: version 0.5.1 - Physical Beam Collimation is accepted. Full manual brows
 - The browser does not stream pose updates during gizmo dragging; it sends the pose when the drag ends.
 - Physical collimation is an ideal hard-edged primary-radiation model. Scatter, dark current, electronic noise, focal-spot penumbra, heel effect, and spectral emission are not modeled. Parallel-beam collimation is unsupported.
 - Full manual browser-to-plugin GUI validation remains outstanding; automated Qt integration tests cover device updates, rollback, and the no-automatic-projection behavior.
-- `XRayPhysicsModel` modularization into separate tube, collimator, and detector classes is deferred; no such classes are part of version 0.5.1.
+- `XRayPhysicsModel` modularization into separate tube, collimator, and detector classes is deferred; `XRayTube`, `XRayCollimator`, and `XRayDetector` are not part of version 0.5.2.
 - Device parameters and geometry synchronization are not bidirectional.
 - Full browser interaction and workspace-selection behavior still require manual verification.
 

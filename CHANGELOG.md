@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2
+
+- Added standalone rectangular collimation controls for field size, reference distance, horizontal and vertical beam steering, and beam roll.
+- Added explicit alignment of the beam frame to the detector, with zero-relative-angle reset.
+- Kept angle edits stable across repeated changes, projection, ordinary GUI refreshes, and properties-panel recreation; external geometry replacement and scene loading rebase the controls explicitly.
+- Preserved the effective rolled and steered beam frame in scenes while keeping relative angle controls session-only.
+- Manually verified standalone collimation controls, H/V steering, beam roll, and projection behavior.
+
 ## 0.5.1
 
 - Added opt-in physical rectangular collimation for cone-beam projections, controlled by `VirtualXRay.physical_collimation_enabled`; directional beam geometry alone remains descriptive unless enabled.
