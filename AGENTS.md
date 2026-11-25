@@ -3,8 +3,10 @@
 This directory contains the virtual X-ray / projection simulation plugin for
 pyDpVision.
 
-Read the root `AGENTS.md` first, then read the local
-`.context/current-state.md` before making non-trivial changes in this plugin.
+Read `../../AGENTS.md` for shared pyDpVision engineering and repository-isolation
+rules, then read `.context/current-state.md` before making non-trivial changes.
+This file owns the virtRTG repository's branch, remote, artifact, and publication
+settings; do not inherit those settings from the host repository.
 
 ## Scope
 
@@ -18,6 +20,56 @@ task explicitly asks for such refactoring.
 Keep virtRTG documentation local to this plugin or to the standalone virtRTG
 repository if the plugin is split out. The main pyDpVision documentation should
 only describe the plugin mechanism and generic integration points.
+
+
+## Project workflow configuration
+
+Use the `project-stage-workflow` skill for versioned implementation, review corrections and accepted-stage closure. The shared skill is located at `../../.agents/skills/project-stage-workflow/SKILL.md`, relative to this plugin's repository root. If automatic discovery is unavailable, read that file directly. If it is unavailable, follow the local rules below and report its absence.
+
+The following settings apply only to this nested plugin repository, not the host or other plugins:
+
+- GitHub repository: `iitis/virtRTG`
+- Git remote: `origin` (verify it targets the repository above)
+- Review branch: `codex`
+- Accepted branch: `dpwork01`
+- Accepted PR merge method: squash
+- Commit convention from the next stage: `<version> - <short lowercase description>` for both review commits and accepted squash-merge commits. Do not rewrite historical commit messages.
+- Automatic intended review commit and normal review push: authorized for versioned implementation and correction tasks unless explicitly disabled by the user
+- Accepted baseline: `.codex/baseline.md`
+- Changelog: `CHANGELOG.md`
+- Active HANDOFF: `.codex/tasks/HANDOFF-<version>.md` (create `.codex/tasks/` when starting a stage if it does not exist)
+- HANDOFF template: `.codex/templates/HANDOFF-template.md` when present; otherwise use the latest archived HANDOFF as a structural reference and replace its stage-specific content
+- Archived HANDOFF directory: `.codex/history/`
+- Complete experiment results: `experiment-results/` (excluded from Git tracking via .gitignore)
+- Temporary archive directory: `D:/current/.TEMP/`
+- Artifact delivery destination: `Z:/Mój dysk/CodexResults/virtRTG/` (verify availability before each delivery)
+
+Resolve repository-relative paths from this plugin's root. Verify the actual repository, remote and branch before any Git write. Do not use host Git settings for plugin operations.
+
+The artifact destination is stored as UTF-8 in this file. In Windows PowerShell, use `Get-Content -Encoding UTF8` when reading this file so `ó` is not decoded through the active console code page. To avoid passing that character through a shell or console encoding when accessing the destination, construct the path with its Unicode code point and use literal-path parameters:
+
+```powershell
+$destination = Join-Path 'Z:\' ('M' + [char]0x00F3 + 'j dysk\CodexResults\virtRTG')
+if (-not (Test-Path -LiteralPath $destination)) {
+    throw "Artifact destination is unavailable: $destination"
+}
+```
+
+Check the destination once before delivery. If it is unavailable, stop and report it; do not retry with mojibake or alternate spellings. Copy with `Copy-Item -LiteralPath` and verify destination byte count and SHA-256 against the source in the same PowerShell invocation. Garbled console rendering alone does not prove that a copy failed; inspect the filesystem result before considering any retry.
+
+## Stage workflow and authorization
+
+- Read the accepted baseline, active task and relevant code before changes. Implement only the active bounded task; report scope conflicts.
+- Work on the review branch; the accepted branch contains accepted versions only. Preserve host and unrelated changes.
+- Run focused and full plugin tests, compilation/import checks, unused-import checks and root/nested diff checks as applicable. For the full plugin suite, use the host's configured Python environment. From the host directory the current command is `.venv/Scripts/python.exe -m pytest -q plugins/virtRTG/tests`. Distinguish real GUI/OpenGL checks from headless tests.
+- Maintain a self-contained tracked HANDOFF, including results, limitations, unresolved issues, manual inspection instructions and artifact locations.
+- Keep complete experiment outputs in `experiment-results/`, ignored by this repository's `.gitignore`. Generate review archives only when required or justified by new materials. Create them in the configured temporary directory outside Git, use revision-specific names, validate integrity, and record byte count and SHA-256. Copy validated archives to the configured delivery destination when available and verify copied byte count and SHA-256. Report failed delivery separately from successful local creation; a local copy does not confirm remote synchronization. Preserve original results and keep generated archives and large outputs out of Git.
+- After verification, commit and push intended review changes according to the authorization above. Report verified remote SHA and worktree status. Stop for review. A review commit never constitutes acceptance.
+- Only after explicit user acceptance, finalize and move the tracked HANDOFF to the history directory, update the baseline and changelog, and commit and push the closure on the review branch with the configured version message. The user or authorized reviewer handles PR creation and merging unless explicitly arranged otherwise. Accepted PRs are squash-merged to the accepted branch to produce exactly one accepted-version commit per stage. Do not directly commit to or merge into the accepted branch without separate explicit authorization.
+- After a confirmed squash merge, post-squash synchronization of the review branch is authorized only after verifying the PR is merged, the accepted and review trees are identical, no extra commits or local changes would be lost, and the remote review head has not changed. Fast-forward the local accepted branch to its remote counterpart. Synchronize the local review branch to the accepted commit and push using an explicit `--force-with-lease` against the independently verified prior remote review SHA. Never force-push the accepted branch. This narrow permission does not authorize other history rewrites or discarding unrelated work. If prerequisites are not met, stop and report the blocker.
+- Before next-stage work, verify accepted remote state and reconcile local branches safely. Do not advance to another stage unless requested.
+
+
 
 ## Current Architecture
 
