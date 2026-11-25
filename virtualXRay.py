@@ -1578,12 +1578,12 @@ class VirtualXRay(Object):
 				gl.glVertex3f(*corner)
 			gl.glEnd()
 
-			gl.glLineWidth(1.5)
-			gl.glColor3f(*self.detector_edge_color)
-			gl.glBegin(gl.GL_LINES)
-			gl.glVertex3f(*(source*1.2))
-			gl.glVertex3f(*(-source*0.2))
-			gl.glEnd()
+			# gl.glLineWidth(1.5)
+			# gl.glColor3f(*self.detector_edge_color)
+			# gl.glBegin(gl.GL_LINES)
+			# gl.glVertex3f(*(source*1.2))
+			# gl.glVertex3f(*(-source*0.2))
+			# gl.glEnd()
 
 			gl.glLineWidth(2.0)
 			gl.glColor3f(*self.source_color)

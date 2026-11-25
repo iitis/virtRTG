@@ -5,6 +5,7 @@ import math
 
 import numpy as np
 from PyQt5.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
+from dpVision import Transform
 
 from .device_adapter import DeviceState
 from .virtualrtg_geometry import map_device_geometry
@@ -15,6 +16,7 @@ _BUILD_GEOMETRY_BACKFILLS = (
 	"depth_window_mode", "depth_window_mm", "depth_window_origin_ref",
 	"depth_window_axis_ref", "motion_frame_mode",
 )
+_PHANTOM_FRAME_LABEL = "Device phantom pose"
 # VirtualXRay.build_geometry() returns a new geometry value and does not cache
 # one on the scene object; its only current persistent side effect is backfill.
 
@@ -39,6 +41,7 @@ def _restore_build_geometry_backfills(virtual_xray, snapshot):
 class DeviceLinkSignals(QObject):
 	"""Signals emitted by the transport thread and consumed by the GUI thread."""
 	geometry_received = pyqtSignal(object)
+	acquisition_received = pyqtSignal(object)
 	status_changed = pyqtSignal(str, str)
 
 
@@ -51,11 +54,13 @@ class DeviceLinkIntegration(QObject):
 		self.active = True
 		self.signals = DeviceLinkSignals(self)
 		self.signals.geometry_received.connect(self._apply_geometry, Qt.QueuedConnection)
+		self.signals.acquisition_received.connect(self._run_acquisition, Qt.QueuedConnection)
 		self.signals.status_changed.connect(plugin._on_device_server_status, Qt.QueuedConnection)
 
 	def disconnect(self):
 		self.active = False
 		for signal, slot in ((self.signals.geometry_received, self._apply_geometry),
+							 (self.signals.acquisition_received, self._run_acquisition),
 							 (self.signals.status_changed, self.plugin._on_device_server_status)):
 			try:
 				signal.disconnect(slot)
@@ -105,5 +110,90 @@ class DeviceLinkIntegration(QObject):
 			self.plugin._on_device_server_status("invalid-geometry", f"Accepted state retained; VirtualXRay geometry rejected: {exc}")
 			return
 		virtual_xray.reset_collimation_reference(beam_geometry)
+		phantom_roots = self._apply_phantom_pose(virtual_xray, geometry["phantom_pose_ref"])
 		self.plugin.refresh_virtual_xray(virtual_xray)
-		self.plugin._on_device_server_status("geometry-applied", f"Updated {virtual_xray.label or 'VirtualXRay'}; no projection requested")
+		detail = f"Updated {virtual_xray.label or 'VirtualXRay'}"
+		if phantom_roots:
+			detail += f"; phantom pose applied to {phantom_roots} anatomy branch(es)"
+		else:
+			detail += "; no Mesh/Volumetric phantom source found"
+		self.plugin._on_device_server_status("geometry-applied", detail)
+
+	@staticmethod
+	def _apply_phantom_pose(virtual_xray, pose):
+		"""Place all X-ray source branches under one pose frame in VirtualXRay coordinates."""
+		position = np.asarray(pose["position_ref"], dtype=np.float64)
+		axes = np.asarray(pose["rotation_axes_ref"], dtype=np.float64)
+		if position.shape != (3,) or axes.shape != (3, 3):
+			raise ValueError("phantom pose must contain a 3D position and three rotation axes")
+		if not np.all(np.isfinite(position)) or not np.all(np.isfinite(axes)):
+			raise ValueError("phantom pose contains non-finite values")
+		pose_matrix = np.eye(4, dtype=np.float64)
+		pose_matrix[:3, :3] = axes.T
+		pose_matrix[:3, 3] = position
+
+		children = getattr(virtual_xray, "children", lambda: [])()
+		frame = next((child for child in children
+			if (getattr(child, "_device_link_phantom_frame", False)
+				or str(getattr(child, "label", "")) == _PHANTOM_FRAME_LABEL)), None)
+		collect_meshes = getattr(virtual_xray, "collect_meshes", lambda: [])
+		collect_volumetrics = getattr(virtual_xray, "collect_volumetrics", lambda: [])
+		sources = list(collect_meshes()) + list(collect_volumetrics())
+		roots = {}
+		for source in sources:
+			root = source
+			while root.parent is not None and root.parent is not virtual_xray and root.parent is not frame:
+				root = root.parent
+			if root.parent is virtual_xray and root is not frame:
+				roots[id(root)] = root
+		if not roots and frame is None:
+			return 0
+
+		if frame is None:
+			frame = Transform()
+			frame.label = _PHANTOM_FRAME_LABEL
+			frame._device_link_phantom_frame = True
+			virtual_xray.addChild(frame)
+		for root in roots.values():
+			frame.addChild(root)
+		frame.fromNumPy(pose_matrix)
+		return len(roots) if roots else len(sources)
+
+	@pyqtSlot(object)
+	def _run_acquisition(self, payload):
+		"""Run an accepted device exposure in the GUI thread and publish its detector image."""
+		if not self.active:
+			return
+		try:
+			state = DeviceState.from_dict(payload["state"])
+			request = payload["request"]
+			parameters = request["parameters"]
+			projection_mode = str(parameters.get("projection", "cone")).strip().lower()
+			if projection_mode not in {"cone", "parallel"}:
+				raise ValueError("projection must be 'cone' or 'parallel'")
+		except (KeyError, TypeError, ValueError) as exc:
+			self.plugin._on_device_server_status("projection-failed", f"Invalid acquisition request: {exc}")
+			return
+
+		virtual_xray = self.plugin.selected_virtual_xray()
+		if virtual_xray is None:
+			self.plugin._on_device_server_status("no-target", "Accepted exposure retained; select one VirtualXRay object")
+			return
+
+		old_mode = virtual_xray.projection_mode
+		old_collimation = getattr(virtual_xray, "physical_collimation_enabled", False)
+		try:
+			virtual_xray.projection_mode = projection_mode
+			virtual_xray.physical_collimation_enabled = True
+			virtual_xray.project_and_cache()
+			self.plugin.display_virtual_xray_projection(virtual_xray)
+		except Exception as exc:
+			self.plugin._on_device_server_status("projection-failed", f"Projection failed: {exc}")
+			return
+		finally:
+			virtual_xray.projection_mode = old_mode
+			virtual_xray.physical_collimation_enabled = old_collimation
+		self.plugin._on_device_server_status(
+			"projection-complete",
+			f"Exposure {request['request_id']} projected from revision {state.revision}",
+		)

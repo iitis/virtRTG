@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0
+
+- Applied simulator phantom poses to mesh and volumetric anatomy under the
+  uniquely selected `VirtualXRay`, using a dedicated transform frame that
+  preserves each anatomy branch's local transform.
+- Connected accepted protocol-v1 acquisition requests to local projection and
+  creation or in-place refresh of the associated `DetectorImage`.
+- Kept projection output local to the plugin; simulator generator values are
+  validated but are not yet applied to projection physics.
+- Disabled the extended source-to-detector helper line in the `VirtualXRay`
+  gizmo by commenting out its drawing fragment.
+
 ## 0.6.4
 
 - Integrated `XRayTube` as the N=1 cone-beam focal source and `XRayCollimator`

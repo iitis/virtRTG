@@ -236,7 +236,9 @@ class DeviceAdapter:
                 # Diagnostics run after state acceptance and must never turn
                 # an accepted protocol message into a failed acknowledgement.
                 LOGGER.warning("Geometry diagnostics failed after state acceptance: %s", exc)
-        return {"protocol":"virtualrtg.device","version":1,"type":"response","in_reply_to":seq,"status":"accepted","timestamp":message["timestamp"],"detail":"protocol acknowledgement; no image generated"}
+        detail = ("acquisition accepted; result remains local"
+                  if kind == "acquisition.request" else "protocol acknowledgement; no image generated")
+        return {"protocol":"virtualrtg.device","version":1,"type":"response","in_reply_to":seq,"status":"accepted","timestamp":message["timestamp"],"detail":detail}
 
     def snapshot(self) -> dict[str, Any]:
         return {"device":self.state.to_dict(),"projection_geometry":projection_geometry(self.state),"image_generated":False}
@@ -265,4 +267,3 @@ def _log_geometry(state: DeviceState, detailed: bool = False) -> None:
                      mapped["orientation_consistent"], mapped["geometry_consistent"],
                      ("undefined" if mapped["detector_normal_ray_alignment"] is None else
                       f"{mapped['detector_normal_ray_alignment']:.6f}"))
-

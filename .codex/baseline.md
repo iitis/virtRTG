@@ -1,10 +1,36 @@
 # virtRTG Baseline
 
-Status: the 0.6.0 architecture design, 0.6.1 tube/collimator snapshots, 0.6.2
-transport extraction, 0.6.3 ideal detector boundary, and 0.6.4 tube/collimator
-runtime integration are accepted. These stages preserve existing numerical
-kernels, scene serialization, GUI, and simulator protocol. Full manual
-browser-to-plugin GUI validation remains outstanding.
+Status: 0.6.0 architecture design, 0.6.1 tube/collimator snapshots, 0.6.2
+transport extraction, 0.6.3 ideal detector boundary, 0.6.4 tube/collimator
+runtime integration, and 0.7.0 browser Device Link projection integration are
+accepted. Version 0.7.0 applies received phantom poses and runs local projection
+for accepted acquisition requests without changing the protocol schema or
+returning image data to the browser. Generator values are validated but are not
+mapped to projection physics; table pose is not applied. Manual end-to-end
+browser-to-plugin verification of pose and acquisition remains outstanding.
+
+## Accepted 0.7.0 browser Device Link projection integration
+
+- Accepted simulator state continues to update the uniquely selected
+  `VirtualXRay` source, detector, and beam geometry. The mapped phantom pose is
+  applied to mesh and volumetric source branches through a dedicated child
+  `Transform`, preserving source-local transforms and avoiding cumulative pose
+  updates.
+- An accepted `acquisition.request` is forwarded from the WebSocket thread to
+  the GUI thread using a queued Qt signal. The selected `VirtualXRay` runs
+  `project_and_cache()` and its associated `DetectorImage` is created or
+  refreshed in the workspace.
+- Cone/parallel mode is read from the optional request `projection` parameter;
+  physical collimation is enabled for the acquisition. Both temporary settings
+  are restored afterward. Acquisition `kvp`, `ma`, `exposure_ms`, and `mas` are
+  validated by protocol v1 but do not alter the current projection physics.
+- The generated image remains local to the plugin. The browser receives the
+  protocol acknowledgement, not projection pixels. No protocol version, field,
+  or message schema changed.
+- The extended source-to-detector gizmo helper line is commented out; source,
+  frustum, detector, and axis drawing remain active.
+- User manually checked the 0.7.0 behavior in the GUI, including the helper-line
+  change. No automated tests were run for 0.7.0.
 
 ## Accepted 0.6.4 tube and collimator runtime integration
 

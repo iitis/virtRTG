@@ -15,11 +15,12 @@ LOGGER = logging.getLogger("virtualrtg.plugin")
 class DeviceServer:
 	"""Own one asyncio WebSocket listener on a dedicated Python thread."""
 
-	def __init__(self, on_geometry, on_status, host="127.0.0.1", port=8765):
+	def __init__(self, on_geometry, on_status, host="127.0.0.1", port=8765, on_acquisition=None):
 		self.host = host
 		self.port = int(port)
 		self.on_geometry = on_geometry
 		self.on_status = on_status
+		self.on_acquisition = on_acquisition
 		self._lock = threading.RLock()
 		self._thread = None
 		self._loop = None
@@ -132,7 +133,11 @@ class DeviceServer:
 			async for raw in websocket:
 				message = await _receive_message(websocket, adapter, raw)
 				if message is not None:
-					self.on_geometry(adapter.state.to_dict())
+					if message.get("type") == "acquisition.request":
+						if self.on_acquisition is not None:
+							self.on_acquisition({"state": adapter.state.to_dict(), "request": message})
+					elif message.get("type") in {"device.pose", "state.update"}:
+						self.on_geometry(adapter.state.to_dict())
 		finally:
 			LOGGER.info("Browser device disconnected: %s", websocket.remote_address)
 
@@ -152,7 +157,7 @@ async def _receive_message(websocket, adapter, raw, verbose=False):
 		response = {"protocol": "virtualrtg.device", "version": 1, "type": "error",
 			"status": "rejected", "message": str(exc)}
 	await websocket.send(json.dumps(response, allow_nan=False))
-	if (isinstance(message, dict) and message.get("type") in {"device.pose", "state.update"}
+	if (isinstance(message, dict) and message.get("type") in {"device.pose", "state.update", "acquisition.request"}
 			and response.get("status") == "accepted"):
 		return message
 	return None

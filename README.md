@@ -106,9 +106,18 @@ conditions.
 
 - `VirtualXRay` scene object integrated into the `pyDpVision` object tree,
 - Qt property panel for interactive setup and simulation,
+- optional protocol-v1 browser Device Server for source, detector, beam, and phantom-pose updates,
+- accepted acquisition requests run a local projection and create or update a `DetectorImage`,
 - projected annotation overlays,
 - PNG, TIFF, and DICOM export helpers,
 - synthetic demos and benchmark helpers.
+
+Device-link geometry updates and acquisition requests apply only when exactly
+one `VirtualXRay` is selected. The phantom pose is applied to mesh and
+volumetric anatomy branches under that object; the simulator table pose is not
+applied. Acquisition results remain in the plugin and are not sent back to the
+browser. Generator values in acquisition requests are validated by the protocol
+adapter but are not mapped to the projection physics settings.
 
 ## How it is used
 
@@ -236,6 +245,8 @@ than a physically faithful radiographic simulator.
 - Presentation models are image-generation layers, not calibrated detector models.
 - Some advanced mesh workflows remain sensitive to source topology and scene setup.
 - Host-side integration still assumes the `pyDpVision` application lifecycle.
+- Browser-to-plugin geometry and acquisition depend on a uniquely selected
+  `VirtualXRay`; the link is local and does not return projection images.
 
 ## Documentation
 

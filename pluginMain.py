@@ -50,6 +50,7 @@ class VirtualRTG(PluginInterface):
 		self._device_server = DeviceServer(
 			self._device_link.signals.geometry_received.emit,
 			self._device_link.signals.status_changed.emit,
+			on_acquisition=self._device_link.signals.acquisition_received.emit,
 		)
 		AP.mainApp.aboutToQuit.connect(self._stop_device_server)
 		# self.create_panel(AP.mainWin)
@@ -336,13 +337,40 @@ class VirtualRTG(PluginInterface):
 			self._device_server_status_action.setText(
 				f"Server status: {label}" + (f" ({detail})" if detail else ""))
 		geometry_labels = {"no-target": "no VirtualXRay selected", "invalid-geometry": "invalid geometry",
-			"geometry-applied": "geometry applied"}
+			"geometry-applied": "geometry applied", "projection-complete": "projection complete",
+			"projection-failed": "projection failed"}
 		if state in geometry_labels and self._device_geometry_status_action is not None:
 			label = geometry_labels[state]
 			self._device_geometry_status_action.setText(
 				f"Device geometry: {label}" + (f" ({detail})" if detail else ""))
-		if state in {"error", "no-target", "invalid-geometry"}:
+		if state in {"error", "no-target", "invalid-geometry", "projection-failed"}:
 			print(f"virtRTG device server [{state}]: {detail}")
+
+	def display_virtual_xray_projection(self, virtual_xray):
+		"""Create or update the DetectorImage associated with a projected VirtualXRay."""
+		if virtual_xray.last_raw_projection is None:
+			raise RuntimeError("Projection completed without a detector image")
+		image = getattr(virtual_xray, "last_projection_image", None)
+		if not isinstance(image, DetectorImage) or not self._is_workspace_object(image):
+			image = DetectorImage()
+			image.sync_from_virtual_xray(virtual_xray, auto_window=True)
+			image.label = f"{virtual_xray.label}_projection"
+			image.source_virtual_xray_label = str(virtual_xray.label)
+			virtual_xray.last_projection_image = image
+			AP.addObject(image)
+		else:
+			image.sync_from_virtual_xray(virtual_xray, auto_window=True)
+			image.label = f"{virtual_xray.label}_projection"
+			image.source_virtual_xray_label = str(virtual_xray.label)
+			AP.mainWin.dock["workspace"].refreshAll()
+			AP.updateAllViews()
+
+	@staticmethod
+	def _is_workspace_object(obj):
+		"""Return whether an image is already attached to the workspace tree."""
+		if obj.parent is not None:
+			return True
+		return any(item is obj for item in AP.mainWin.workspace.m_data)
 
 	def selected_virtual_xray(self):
 		"""Return the uniquely selected VirtualXRay scene object, if any."""
@@ -352,8 +380,9 @@ class VirtualRTG(PluginInterface):
 		return matches[0] if len(selected) == 1 and len(matches) == 1 else None
 
 	def refresh_virtual_xray(self, virtual_xray):
-		"""Refresh views and the selected geometry panel after a device geometry update."""
+		"""Refresh views, workspace tree and geometry panel after a device update."""
 		AP.updateProperties()
+		AP.mainWin.dock["workspace"].refreshAll()
 		AP.updateAllViews()
 
 
